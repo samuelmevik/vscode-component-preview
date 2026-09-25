@@ -4,12 +4,144 @@ import * as fs from 'fs';
 import { createServer, ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { ComponentPreviewMeta } from '../parser/commentParser';
+import { getWorkspaceAliases } from './workspaceAliases';
 
 export interface PreviewServerState {
   currentFile: string;
   currentComponentName: string;
   meta: ComponentPreviewMeta;
   isLocked?: boolean;
+}
+
+const STORE_CANDIDATE_EXTENSIONS = [
+  '',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '/index.ts',
+  '/index.tsx',
+  '/index.js',
+  '/index.jsx',
+];
+
+function resolveStoreFile(baseDir: string, relativePath: string): string | null {
+  for (const ext of STORE_CANDIDATE_EXTENSIONS) {
+    const full = path.resolve(baseDir, relativePath + ext);
+    if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+      return full;
+    }
+  }
+  return null;
+}
+
+function generateVirtualEntry(
+  state: PreviewServerState | null,
+  harnessEntryPath: string
+): string {
+  if (!state) {
+    return `
+      import React from 'react';
+      import ReactDOM from 'react-dom/client';
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(
+        React.createElement('div', {
+          style: { color: '#888', padding: '24px', fontFamily: 'sans-serif', textAlign: 'center' }
+        }, 'No active component selected for preview.')
+      );
+    `;
+  }
+
+  const normalizedFilePath = state.currentFile.replace(/\\/g, '/');
+  const fileImportUrl = `/@fs/${normalizedFilePath}`;
+  const harnessImportUrl = `/@fs/${harnessEntryPath}`;
+  const compName = state.currentComponentName;
+  const variantsJson = JSON.stringify(state.meta.variants);
+  const isLocked = state.isLocked ? 'true' : 'false';
+  const compDir = path.dirname(state.currentFile);
+
+  const cleanStorePaths = Array.from(
+    new Set(
+      state.meta.variants
+        .map((v) => (v.storePath ? v.storePath.split('#')[0].trim() : undefined))
+        .filter((sp): sp is string => Boolean(sp))
+    )
+  );
+
+  const storeEntries = cleanStorePaths.map((cleanPath, index) => {
+    const importVar = `StoreModule_${index}`;
+    if (cleanPath.startsWith('.')) {
+      const resolved = resolveStoreFile(compDir, cleanPath);
+      if (resolved) {
+        return {
+          cleanPath,
+          importVar,
+          importStatement: `import * as ${importVar} from '/@fs/${resolved.replace(/\\/g, '/')}';`,
+        };
+      }
+      return {
+        cleanPath,
+        importVar,
+        error: `Could not find store file "${cleanPath}" relative to ${normalizedFilePath}`,
+      };
+    }
+    return {
+      cleanPath,
+      importVar,
+      importStatement: `import * as ${importVar} from '${cleanPath}';`,
+    };
+  });
+
+  const storeImports = storeEntries
+    .filter((e) => e.importStatement)
+    .map((e) => e.importStatement)
+    .join('\n');
+
+  const storeModulesMap = storeEntries
+    .map((e) => {
+      if (e.error) {
+        return `${JSON.stringify(e.cleanPath)}: { __error__: ${JSON.stringify(e.error)} }`;
+      }
+      return `${JSON.stringify(e.cleanPath)}: ${e.importVar}`;
+    })
+    .join(',\n              ');
+
+  return `
+    import React from 'react';
+    import ReactDOM from 'react-dom/client';
+    import { Harness } from '${harnessImportUrl}';
+    import * as UserModule from '${fileImportUrl}';
+    ${storeImports}
+
+    const SelectedComponent = UserModule['${compName}'] || UserModule.default;
+    const initialVariants = ${variantsJson};
+    const storeModules = {
+      ${storeModulesMap}
+    };
+
+    const rootElement = document.getElementById('root');
+    if (rootElement) {
+      const root = ReactDOM.createRoot(rootElement);
+      if (!SelectedComponent) {
+        root.render(
+          React.createElement('div', {
+            style: { color: '#f14c4c', padding: '24px', fontFamily: 'sans-serif' }
+          }, 'Component "${compName}" not found in export of ${normalizedFilePath}')
+        );
+      } else {
+        root.render(
+          React.createElement(Harness, {
+            ComponentToRender: SelectedComponent,
+            userModule: UserModule,
+            storeModules: storeModules,
+            initialComponentName: '${compName}',
+            initialVariants: initialVariants,
+            initialIsLocked: ${isLocked}
+          })
+        );
+      }
+    }
+  `;
 }
 
 export class PreviewViteServer {
@@ -61,24 +193,24 @@ export class PreviewViteServer {
       return this.port;
     }
 
-    const self = this;
-    const harnessEntryPath = path.resolve(this.extensionPath, 'preview-app/src/Harness.tsx').replace(/\\/g, '/');
+    const harnessEntryPath = path
+      .resolve(this.extensionPath, 'preview-app/src/Harness.tsx')
+      .replace(/\\/g, '/');
 
     const previewPlugin = {
       name: 'vscode-component-preview-plugin',
-      configureServer(devServer: ViteDevServer) {
+      configureServer: (devServer: ViteDevServer) => {
         devServer.middlewares.use((req, res, next) => {
           const url = req.url || '';
+
           if (url.startsWith('/__preview_api/toggle_lock') && req.method === 'POST') {
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
             req.on('end', () => {
               try {
                 const data = body ? JSON.parse(body) : {};
-                if (self.onLockToggled) {
-                  self.onLockToggled(data.locked);
-                }
-              } catch (e) {}
+                this.onLockToggled?.(data.locked);
+              } catch {}
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ ok: true }));
             });
@@ -88,10 +220,8 @@ export class PreviewViteServer {
           if (url.startsWith('/__preview_api/stop_server') && req.method === 'POST') {
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ ok: true }));
-            if (self.onStopRequested) {
-              setTimeout(() => {
-                self.onStopRequested?.();
-              }, 50);
+            if (this.onStopRequested) {
+              setTimeout(() => this.onStopRequested?.(), 50);
             }
             return;
           }
@@ -131,6 +261,7 @@ export class PreviewViteServer {
 </html>`);
             return;
           }
+
           next();
         });
       },
@@ -140,148 +271,14 @@ export class PreviewViteServer {
         }
         return null;
       },
-      load(id: string) {
+      load: (id: string) => {
         if (id.startsWith('\0preview_entry.tsx')) {
-          if (!self.state) {
-            return `
-              import React from 'react';
-              import ReactDOM from 'react-dom/client';
-              const root = ReactDOM.createRoot(document.getElementById('root'));
-              root.render(
-                React.createElement('div', {
-                  style: { color: '#888', padding: '24px', fontFamily: 'sans-serif', textAlign: 'center' }
-                }, 'No active component selected for preview.')
-              );
-            `;
-          }
-
-          const normalizedFilePath = self.state.currentFile.replace(/\\/g, '/');
-          const fileImportUrl = `/@fs/${normalizedFilePath}`;
-          const harnessImportUrl = `/@fs/${harnessEntryPath}`;
-          const compName = self.state.currentComponentName;
-          const variantsJson = JSON.stringify(self.state.meta.variants);
-          const isLocked = self.state.isLocked ? 'true' : 'false';
-
-          const compDir = path.dirname(self.state.currentFile);
-          const cleanStorePaths = Array.from(
-            new Set(
-              self.state.meta.variants
-                .map((v) => (v.storePath ? v.storePath.split('#')[0].trim() : undefined))
-                .filter((sp): sp is string => Boolean(sp))
-            )
-          );
-
-          const storeEntries: Array<{
-            cleanPath: string;
-            importVar: string;
-            importStatement?: string;
-            error?: string;
-          }> = [];
-
-          cleanStorePaths.forEach((cleanPath, index) => {
-            const importVar = `StoreModule_${index}`;
-
-            if (cleanPath.startsWith('.')) {
-              const candidates = [
-                cleanPath,
-                `${cleanPath}.ts`,
-                `${cleanPath}.tsx`,
-                `${cleanPath}.js`,
-                `${cleanPath}.jsx`,
-                path.join(cleanPath, 'index.ts'),
-                path.join(cleanPath, 'index.tsx'),
-                path.join(cleanPath, 'index.js'),
-                path.join(cleanPath, 'index.jsx'),
-              ];
-              let resolvedFile: string | null = null;
-              for (const cand of candidates) {
-                const full = path.resolve(compDir, cand);
-                if (fs.existsSync(full) && fs.statSync(full).isFile()) {
-                  resolvedFile = full;
-                  break;
-                }
-              }
-
-              if (resolvedFile) {
-                const normalizedStoreFile = resolvedFile.replace(/\\/g, '/');
-                storeEntries.push({
-                  cleanPath,
-                  importVar,
-                  importStatement: `import * as ${importVar} from '/@fs/${normalizedStoreFile}';`,
-                });
-              } else {
-                storeEntries.push({
-                  cleanPath,
-                  importVar,
-                  error: `Could not find store file "${cleanPath}" relative to ${normalizedFilePath}`,
-                });
-              }
-            } else {
-              // Alias or node module path
-              storeEntries.push({
-                cleanPath,
-                importVar,
-                importStatement: `import * as ${importVar} from '${cleanPath}';`,
-              });
-            }
-          });
-
-          const storeImports = storeEntries
-            .filter((e) => e.importStatement)
-            .map((e) => e.importStatement)
-            .join('\n');
-
-          const storeModulesMap = storeEntries
-            .map((e) => {
-              if (e.error) {
-                return `${JSON.stringify(e.cleanPath)}: { __error__: ${JSON.stringify(e.error)} }`;
-              }
-              return `${JSON.stringify(e.cleanPath)}: ${e.importVar}`;
-            })
-            .join(',\n              ');
-
-          return `
-            import React from 'react';
-            import ReactDOM from 'react-dom/client';
-            import { Harness } from '${harnessImportUrl}';
-            import * as UserModule from '${fileImportUrl}';
-            ${storeImports}
-
-            const SelectedComponent = UserModule['${compName}'] || UserModule.default;
-            const initialVariants = ${variantsJson};
-            const storeModules = {
-              ${storeModulesMap}
-            };
-
-            const rootElement = document.getElementById('root');
-            if (rootElement) {
-              const root = ReactDOM.createRoot(rootElement);
-              if (!SelectedComponent) {
-                root.render(
-                  React.createElement('div', {
-                    style: { color: '#f14c4c', padding: '24px', fontFamily: 'sans-serif' }
-                  }, 'Component "${compName}" not found in export of ${normalizedFilePath}')
-                );
-              } else {
-                root.render(
-                  React.createElement(Harness, {
-                    ComponentToRender: SelectedComponent,
-                    userModule: UserModule,
-                    storeModules: storeModules,
-                    initialComponentName: '${compName}',
-                    initialVariants: initialVariants,
-                    initialIsLocked: ${isLocked}
-                  })
-                );
-              }
-            }
-          `;
+          return generateVirtualEntry(this.state, harnessEntryPath);
         }
         return null;
       },
     };
 
-    // Find an open port
     this.port = await this.findAvailablePort(this.defaultPort);
 
     this.server = await createServer({
@@ -299,7 +296,7 @@ export class PreviewViteServer {
       },
       resolve: {
         dedupe: ['react', 'react-dom'],
-        alias: this.getWorkspaceAliases(workspaceRoot),
+        alias: getWorkspaceAliases(workspaceRoot, this.extensionPath),
       },
       plugins: [
         react(),
@@ -316,8 +313,7 @@ export class PreviewViteServer {
     });
 
     await this.server.listen();
-    const actualPort = this.server.config.server.port || this.port;
-    this.port = actualPort;
+    this.port = this.server.config.server.port || this.port;
     console.log(`[Component Preview] Vite dev server running at http://127.0.0.1:${this.port}`);
     return this.port;
   }
@@ -333,68 +329,6 @@ export class PreviewViteServer {
       await s.close();
       console.log('[Component Preview] Vite dev server stopped.');
     }
-  }
-
-  private getWorkspaceAliases(workspaceRoot: string): Array<{ find: RegExp | string; replacement: string }> {
-    const aliases: Array<{ find: RegExp | string; replacement: string }> = [];
-
-    // Fallback for React/ReactDOM if workspace does not have them in its node_modules
-    const workspaceHasReact = fs.existsSync(path.join(workspaceRoot, 'node_modules', 'react'));
-    if (!workspaceHasReact) {
-      const extReact = path.join(this.extensionPath, 'node_modules', 'react');
-      const extReactDom = path.join(this.extensionPath, 'node_modules', 'react-dom');
-      if (fs.existsSync(extReact)) {
-        aliases.push({ find: 'react', replacement: extReact });
-      }
-      if (fs.existsSync(extReactDom)) {
-        aliases.push({ find: 'react-dom', replacement: extReactDom });
-      }
-    }
-
-    // Read tsconfig.json or jsconfig.json path mappings from workspace
-    for (const configName of ['tsconfig.json', 'jsconfig.json']) {
-      const configPath = path.join(workspaceRoot, configName);
-      if (fs.existsSync(configPath)) {
-        try {
-          const content = fs.readFileSync(configPath, 'utf8');
-          // Strip single-line and multi-line comments & trailing commas
-          const cleaned = content
-            .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '$1')
-            .replace(/,\s*([}\]])/g, '$1');
-          const parsed = JSON.parse(cleaned);
-          const compilerOptions = parsed?.compilerOptions;
-          if (compilerOptions) {
-            const baseUrl = compilerOptions.baseUrl ? path.resolve(workspaceRoot, compilerOptions.baseUrl) : workspaceRoot;
-            if (compilerOptions.paths) {
-              for (const [key, targets] of Object.entries<string[]>(compilerOptions.paths)) {
-                if (Array.isArray(targets) && targets.length > 0) {
-                  const target = targets[0];
-                  if (key.endsWith('/*')) {
-                    const prefix = key.slice(0, -2);
-                    const targetPrefix = target.endsWith('/*') ? target.slice(0, -2) : target;
-                    const replacementDir = path.resolve(baseUrl, targetPrefix);
-                    aliases.push({
-                      find: new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(.*)$`),
-                      replacement: `${replacementDir.replace(/\\/g, '/')}/$1`,
-                    });
-                  } else {
-                    aliases.push({
-                      find: key,
-                      replacement: path.resolve(baseUrl, target).replace(/\\/g, '/'),
-                    });
-                  }
-                }
-              }
-            }
-          }
-        } catch (e) {
-          // Ignore invalid tsconfig parse errors
-        }
-        break;
-      }
-    }
-
-    return aliases;
   }
 
   private findAvailablePort(startPort: number): Promise<number> {

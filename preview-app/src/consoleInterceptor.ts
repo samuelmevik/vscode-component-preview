@@ -10,7 +10,6 @@ export function subscribeToConsoleLogs(subscriber: LogSubscriber): () => void {
   };
 }
 
-// Global declaration for window tracking
 declare global {
   interface Window {
     __component_preview_console_installed__?: boolean;
@@ -30,11 +29,11 @@ export function installConsoleInterceptor(): void {
     error: console.error.bind(console),
   };
 
-  const levels: Array<'log' | 'info' | 'warn' | 'error'> = ['log', 'info', 'warn', 'error'];
+  const levels = ['log', 'info', 'warn', 'error'] as const;
 
-  levels.forEach((level) => {
+  for (const level of levels) {
     console[level] = (...args: any[]) => {
-      // 1. Call native console method so devtools still show output
+      // 1. Call native console method so browser devtools still show output
       originalConsole[level](...args);
 
       // 2. Filter out internal Vite and React Refresh messages to keep preview clean
@@ -49,23 +48,13 @@ export function installConsoleInterceptor(): void {
 
       // 3. Format name & payload for visual display
       let name = `console.${level}`;
-      let payload: any = undefined;
+      let payload: any;
 
-      if (args.length === 1) {
-        if (typeof args[0] === 'string') {
-          name = args[0];
-        } else {
-          name = `console.${level}`;
-          payload = args[0];
-        }
-      } else if (args.length > 1) {
-        if (typeof args[0] === 'string') {
-          name = args[0];
-          payload = args.length === 2 ? args[1] : args.slice(1);
-        } else {
-          name = `console.${level}`;
-          payload = args;
-        }
+      if (typeof args[0] === 'string') {
+        name = args[0];
+        payload = args.length === 2 ? args[1] : args.length > 2 ? args.slice(1) : undefined;
+      } else {
+        payload = args.length === 1 ? args[0] : args.length > 1 ? args : undefined;
       }
 
       const item: ActionLogItem = {
@@ -77,11 +66,11 @@ export function installConsoleInterceptor(): void {
         timestamp: new Date().toLocaleTimeString(),
       };
 
-      // 4. Notify all React component subscribers (Harness instances)
+      // 4. Notify React component subscribers
       subscribers.forEach((sub) => {
         try {
           sub(item);
-        } catch (e) { }
+        } catch {}
       });
 
       // 5. Forward serialized log to parent webview host for VS Code Output panel
@@ -109,9 +98,9 @@ export function installConsoleInterceptor(): void {
           },
           '*'
         );
-      } catch (e) { }
+      } catch {}
     };
-  });
+  }
 }
 
 // Auto-install on module import

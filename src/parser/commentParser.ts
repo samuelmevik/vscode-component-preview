@@ -16,20 +16,6 @@ export interface ComponentPreviewMeta {
   variants: PreviewVariant[];
 }
 
-/**
- * Extracts and parses all @preview blocks from a collection of comment strings.
- * Supports:
- *   /* @preview
- *   props:
- *     title: "Hello"
- *   * /
- *
- * And named variants:
- *   /* @preview: Loading State
- *   props:
- *     isLoading: true
- *   * /
- */
 function dedent(text: string): string {
   const rawLines = text.split(/\r?\n/);
   while (rawLines.length > 0 && rawLines[0].trim() === '') rawLines.shift();
@@ -59,17 +45,19 @@ export function parsePreviewComments(comments: string[], componentName: string):
   const variants: PreviewVariant[] = [];
 
   for (const comment of comments) {
-    // Clean up comment markers: /* ... */ or // ...
+    // Strip comment wrapper symbols and leading JSDoc asterisks
     const cleaned = comment
       .replace(/^\/\*+/, '')
       .replace(/\*+\/$/, '')
-      .replace(/^\s*\*\s?/gm, ''); // remove leading asterisks from JSDoc lines
+      .replace(/^\s*\*\s?/gm, '');
 
-    // Match lines starting with @preview or @preview: <name>
-    const previewRegex = /@preview(?::\s*([^\n\r]+))?([\s\S]*)/i;
-    const match = cleaned.match(previewRegex);
+    // Split blocks if multiple @preview annotations appear in the same comment
+    const blocks = cleaned.split(/(?=@preview)/i);
 
-    if (match) {
+    for (const block of blocks) {
+      const match = block.match(/^@preview(?::\s*([^\n\r]+))?([\s\S]*)/i);
+      if (!match) continue;
+
       const variantName = match[1]?.trim() || (variants.length === 0 ? 'Default' : `Variant ${variants.length + 1}`);
       const yamlContent = dedent(match[2] || '');
 
@@ -99,41 +87,40 @@ export function parsePreviewComments(comments: string[], componentName: string):
 
           variants.push({
             name: variantName,
-            props: props,
+            props,
             store: parsed.store || parsed.state || {},
-            storePath: storePath,
+            storePath,
             slice: parsed.slice,
             viewport: parsed.viewport,
-            rawYaml: yamlContent
+            rawYaml: yamlContent,
           });
         } else {
           variants.push({
             name: variantName,
             props: {},
             store: {},
-            rawYaml: yamlContent
+            rawYaml: yamlContent,
           });
         }
       } catch (err: any) {
         variants.push({
           name: variantName,
           parseError: `YAML Syntax Error: ${err.message}`,
-          rawYaml: yamlContent
+          rawYaml: yamlContent,
         });
       }
     }
   }
 
-  // If no preview comments found, provide a fallback default variant
+  // Fallback default variant if none parsed
   if (variants.length === 0) {
     variants.push({
       name: 'Default',
       props: {},
-      store: {}
+      store: {},
     });
   } else {
-    // If a variant doesn't specify storePath, inherit from the first variant that defines it,
-    // unless explicitly overridden with 'none' or 'mock'
+    // Inherit default storePath from the first variant that defines it, unless explicitly overridden
     const defaultStorePath = variants.find(
       (v) => v.storePath && v.storePath !== 'none' && v.storePath !== 'mock'
     )?.storePath;
@@ -151,6 +138,6 @@ export function parsePreviewComments(comments: string[], componentName: string):
 
   return {
     componentName,
-    variants
+    variants,
   };
 }

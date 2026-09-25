@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as ts from 'typescript';
 import { ComponentPreviewMeta, parsePreviewComments } from './commentParser';
 
@@ -7,6 +8,7 @@ export interface ScannedComponent {
   isNamedExport: boolean;
   startLine: number;
   endLine: number;
+  commentStartLine: number;
   meta: ComponentPreviewMeta;
 }
 
@@ -16,9 +18,6 @@ export interface ScanResult {
   targetComponent?: ScannedComponent;
 }
 
-/**
- * Checks if an identifier name resembles a React component (PascalCase or starts with capital letter).
- */
 function isComponentIdentifier(name: string): boolean {
   return /^[A-Z][a-zA-Z0-9_]*$/.test(name);
 }
@@ -51,7 +50,6 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
     isDefaultExport: boolean,
     isNamedExport: boolean
   ) {
-    // Avoid duplicates
     if (components.some((c) => c.name === name)) {
       return;
     }
@@ -59,6 +57,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
     const comments = getLeadingComments(node);
     const meta = parsePreviewComments(comments, name);
 
+    const fullStart = sourceFile.getLineAndCharacterOfPosition(node.getFullStart());
     const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
     const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
 
@@ -68,6 +67,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
       isNamedExport,
       startLine: start.line + 1,
       endLine: end.line + 1,
+      commentStartLine: fullStart.line + 1,
       meta,
     });
   }
@@ -76,10 +76,13 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
     const isExported = (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Export) !== 0;
     const isDefault = (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Default) !== 0;
 
-    // 1. Function Declarations: export function MyComponent(...) {}
-    if (ts.isFunctionDeclaration(node) && node.name) {
-      const name = node.name.text;
-      if (isComponentIdentifier(name)) {
+    // 1. Function Declarations: export function MyComponent(...) {} or export default function(...) {}
+    if (ts.isFunctionDeclaration(node)) {
+      const name =
+        node.name?.text ||
+        (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
+
+      if (name && isComponentIdentifier(name)) {
         registerComponent(name, node, isDefault, isExported);
       }
     }
@@ -118,9 +121,9 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
   let targetComponent: ScannedComponent | undefined;
 
   if (cursorLine !== undefined) {
-    // Check if cursor is directly inside a component or right before it (where the comments are)
+    // Check if cursor is directly inside a component or in its leading comments
     targetComponent = components.find(
-      (c) => cursorLine >= c.startLine - 5 && cursorLine <= c.endLine
+      (c) => cursorLine >= c.commentStartLine && cursorLine <= c.endLine
     );
   }
 

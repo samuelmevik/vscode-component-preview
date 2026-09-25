@@ -90,8 +90,6 @@ export const UserProfile: React.FC = () => {
         </span>
       </div>
 
-      <p>hej</p>
-
       <div className={styles.actions}>
         <button
           onClick={() =>

@@ -19,6 +19,28 @@ interface ActionPanelProps {
 
 type FilterType = 'all' | 'console' | 'redux' | 'callback';
 
+const LogSourceBadge: React.FC<{
+  source: ActionLogItem['source'];
+  level?: ActionLogItem['level'];
+}> = ({ source, level }) => {
+  if (source === 'redux') {
+    return <><Radio size={11} /> REDUX</>;
+  }
+  if (source === 'callback') {
+    return <><Zap size={11} /> CALLBACK</>;
+  }
+  switch (level) {
+    case 'error':
+      return <><AlertCircle size={11} /> ERROR</>;
+    case 'warn':
+      return <><AlertTriangle size={11} /> WARN</>;
+    case 'info':
+      return <><Info size={11} /> INFO</>;
+    default:
+      return <><Terminal size={11} /> LOG</>;
+  }
+};
+
 export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
@@ -28,18 +50,26 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
     return logs.filter((log) => log.source === filter);
   }, [logs, filter]);
 
-  const consoleCount = useMemo(() => logs.filter((l) => l.source === 'console').length, [logs]);
-  const reduxCount = useMemo(() => logs.filter((l) => l.source === 'redux').length, [logs]);
-  const callbackCount = useMemo(() => logs.filter((l) => l.source === 'callback').length, [logs]);
+  const counts = useMemo(() => {
+    let consoleCount = 0;
+    let reduxCount = 0;
+    let callbackCount = 0;
+    let errorCount = 0;
+    let warnCount = 0;
 
-  const errorCount = useMemo(
-    () => logs.filter((l) => l.level === 'error').length,
-    [logs]
-  );
-  const warnCount = useMemo(
-    () => logs.filter((l) => l.level === 'warn').length,
-    [logs]
-  );
+    for (const log of logs) {
+      if (log.source === 'console') consoleCount++;
+      else if (log.source === 'redux') reduxCount++;
+      else if (log.source === 'callback') callbackCount++;
+
+      if (log.level === 'error') errorCount++;
+      else if (log.level === 'warn') warnCount++;
+    }
+
+    return { consoleCount, reduxCount, callbackCount, errorCount, warnCount };
+  }, [logs]);
+
+  const { consoleCount, reduxCount, callbackCount, errorCount, warnCount } = counts;
 
   return (
     <div className={`action-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
@@ -75,30 +105,26 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
         <>
           <div className="action-panel-toolbar">
             <div className="filter-tabs">
-              <button
-                className={`filter-tab ${filter === 'all' ? 'active' : ''}`}
-                onClick={() => setFilter('all')}
-              >
-                All ({logs.length})
-              </button>
-              <button
-                className={`filter-tab ${filter === 'console' ? 'active' : ''}`}
-                onClick={() => setFilter('console')}
-              >
-                Console ({consoleCount})
-              </button>
-              <button
-                className={`filter-tab ${filter === 'redux' ? 'active' : ''}`}
-                onClick={() => setFilter('redux')}
-              >
-                Redux ({reduxCount})
-              </button>
-              <button
-                className={`filter-tab ${filter === 'callback' ? 'active' : ''}`}
-                onClick={() => setFilter('callback')}
-              >
-                Callbacks ({callbackCount})
-              </button>
+              {(['all', 'console', 'redux', 'callback'] as const).map((type) => {
+                const count =
+                  type === 'all'
+                    ? logs.length
+                    : type === 'console'
+                    ? consoleCount
+                    : type === 'redux'
+                    ? reduxCount
+                    : callbackCount;
+                const label = type.charAt(0).toUpperCase() + type.slice(1);
+                return (
+                  <button
+                    key={type}
+                    className={`filter-tab ${filter === type ? 'active' : ''}`}
+                    onClick={() => setFilter(type)}
+                  >
+                    {label} ({count})
+                  </button>
+                );
+              })}
             </div>
             {logs.length > 0 && (
               <button className="clear-text-btn" onClick={onClear} title="Clear all logs">
@@ -115,35 +141,11 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
               </div>
             ) : (
               <div className="action-list">
-                  {filteredLogs.map((log) => (
-                    <div key={log.id} className={`action-item ${log.source} ${log.level || ''}`}>
-                      <div className="action-item-header">
-                        <span className="source-tag">
-                          {log.source === 'redux' ? (
-                            <>
-                              <Radio size={11} /> REDUX
-                            </>
-                        ) : log.source === 'callback' ? (
-                          <>
-                            <Zap size={11} /> CALLBACK
-                            </>
-                          ) : log.level === 'error' ? (
-                            <>
-                              <AlertCircle size={11} /> ERROR
-                            </>
-                          ) : log.level === 'warn' ? (
-                            <>
-                              <AlertTriangle size={11} /> WARN
-                            </>
-                          ) : log.level === 'info' ? (
-                            <>
-                              <Info size={11} /> INFO
-                            </>
-                          ) : (
-                            <>
-                              <Terminal size={11} /> LOG
-                          </>
-                        )}
+                {filteredLogs.map((log) => (
+                  <div key={log.id} className={`action-item ${log.source} ${log.level || ''}`}>
+                    <div className="action-item-header">
+                      <span className="source-tag">
+                        <LogSourceBadge source={log.source} level={log.level} />
                       </span>
                       <span className="action-name">{log.name}</span>
                       <span className="action-time">{log.timestamp}</span>
