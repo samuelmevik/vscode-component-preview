@@ -111,6 +111,48 @@ function test() {
     process.exit(1);
   }
 
+  console.log('\n--- Testing Class Components and Anonymous Arrow Default Exports ---');
+  const advancedSnippet = `
+  /* @preview: Class Component Variant
+  props:
+    title: "Class Widget"
+  wrapper: "./AppWrapper"
+  viewport:
+    width: 375
+    height: 667
+  */
+  export class ClassWidget extends React.Component<{ title: string }> {
+    render() { return <h1>{this.props.title}</h1>; }
+  }
+
+  /* @preview: Arrow Default Export
+  props:
+    count: 42
+  */
+  export default () => <div>Arrow</div>;
+  `;
+  const advResult = scanComponents(advancedSnippet, 'AdvancedView.tsx');
+  if (advResult.components.length !== 2) {
+    console.error(`Expected 2 components in advancedSnippet, got ${advResult.components.length}`);
+    process.exit(1);
+  }
+
+  const classComp = advResult.components.find((c) => c.name === 'ClassWidget');
+  if (!classComp || classComp.meta.variants[0].wrapperPath !== './AppWrapper') {
+    console.error('ClassWidget or wrapperPath assertion failed!');
+    process.exit(1);
+  }
+  console.log('- Class component detected:', classComp.name);
+  console.log('- Class wrapperPath:', classComp.meta.variants[0].wrapperPath);
+  console.log('- Class viewport:', classComp.meta.variants[0].viewport);
+
+  const arrowComp = advResult.components.find((c) => c.name === 'AdvancedView');
+  if (!arrowComp || !arrowComp.isDefaultExport) {
+    console.error('Anonymous arrow default export assertion failed!');
+    process.exit(1);
+  }
+  console.log('- Anonymous arrow default export detected:', arrowComp.name);
+
   console.log('\n✅ All parser tests passed successfully!');
 }
 

@@ -9,6 +9,9 @@ import {
   AlertCircle,
   AlertTriangle,
   Info,
+  Search,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
 
@@ -44,11 +47,29 @@ const LogSourceBadge: React.FC<{
 export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const filteredLogs = useMemo(() => {
-    if (filter === 'all') return logs;
-    return logs.filter((log) => log.source === filter);
-  }, [logs, filter]);
+    let result = logs;
+    if (filter !== 'all') {
+      result = result.filter((log) => log.source === filter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((log) => {
+        if (log.name.toLowerCase().includes(q)) return true;
+        if (log.payload !== undefined) {
+          const payloadStr = typeof log.payload === 'object'
+            ? JSON.stringify(log.payload)
+            : String(log.payload);
+          if (payloadStr.toLowerCase().includes(q)) return true;
+        }
+        return false;
+      });
+    }
+    return result;
+  }, [logs, filter, searchQuery]);
 
   const counts = useMemo(() => {
     let consoleCount = 0;
@@ -126,11 +147,28 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                 );
               })}
             </div>
-            {logs.length > 0 && (
-              <button className="clear-text-btn" onClick={onClear} title="Clear all logs">
-                <Trash2 size={11} /> Clear
-              </button>
-            )}
+
+            <div className="toolbar-right">
+              <div className="search-input-wrapper">
+                <Search size={11} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Filter logs &amp; actions..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="search-input"
+                />
+                {searchQuery && (
+                  <button className="search-clear-btn" onClick={() => setSearchQuery('')}>×</button>
+                )}
+              </div>
+
+              {logs.length > 0 && (
+                <button className="clear-text-btn" onClick={onClear} title="Clear all logs">
+                  <Trash2 size={11} /> Clear
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="action-panel-body">
@@ -148,7 +186,24 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                         <LogSourceBadge source={log.source} level={log.level} />
                       </span>
                       <span className="action-name">{log.name}</span>
-                      <span className="action-time">{log.timestamp}</span>
+                      <div className="action-header-right">
+                        <button
+                          className="copy-log-btn"
+                          title="Copy payload to clipboard"
+                          onClick={() => {
+                            const textToCopy =
+                              typeof log.payload === 'object'
+                                ? JSON.stringify(log.payload, null, 2)
+                                : String(log.payload ?? log.name);
+                            navigator.clipboard?.writeText(textToCopy);
+                            setCopiedId(log.id);
+                            setTimeout(() => setCopiedId(null), 1500);
+                          }}
+                        >
+                          {copiedId === log.id ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
+                        </button>
+                        <span className="action-time">{log.timestamp}</span>
+                      </div>
                     </div>
                     {log.payload !== undefined && (
                       <pre className="action-payload">

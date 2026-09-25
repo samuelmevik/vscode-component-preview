@@ -87,7 +87,18 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
       }
     }
 
-    // 2. Variable Statements: export const MyComponent = (...) => {}
+    // 2. Class Declarations: export class MyComponent extends React.Component {}
+    else if (ts.isClassDeclaration(node)) {
+      const name =
+        node.name?.text ||
+        (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
+
+      if (name && isComponentIdentifier(name)) {
+        registerComponent(name, node, isDefault, isExported);
+      }
+    }
+
+    // 3. Variable Statements: export const MyComponent = (...) => {}
     else if (ts.isVariableStatement(node)) {
       for (const declaration of node.declarationList.declarations) {
         if (ts.isIdentifier(declaration.name)) {
@@ -99,7 +110,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
       }
     }
 
-    // 3. Export Assignment: export default MyComponent;
+    // 4. Export Assignment: export default MyComponent; or export default () => <div/>;
     else if (ts.isExportAssignment(node)) {
       if (ts.isIdentifier(node.expression)) {
         const name = node.expression.text;
@@ -107,6 +118,25 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
         if (existing) {
           existing.isDefaultExport = true;
         } else if (isComponentIdentifier(name)) {
+          registerComponent(name, node, true, true);
+        }
+      } else if (ts.isArrowFunction(node.expression) || ts.isFunctionExpression(node.expression)) {
+        const fileBase = path.basename(filePath, path.extname(filePath));
+        const name = isComponentIdentifier(fileBase) ? fileBase : 'DefaultComponent';
+        registerComponent(name, node, true, true);
+      } else if (ts.isCallExpression(node.expression)) {
+        const callArg = node.expression.arguments[0];
+        if (callArg && ts.isIdentifier(callArg)) {
+          const name = callArg.text;
+          const existing = components.find((c) => c.name === name);
+          if (existing) {
+            existing.isDefaultExport = true;
+          } else if (isComponentIdentifier(name)) {
+            registerComponent(name, node, true, true);
+          }
+        } else {
+          const fileBase = path.basename(filePath, path.extname(filePath));
+          const name = isComponentIdentifier(fileBase) ? fileBase : 'DefaultComponent';
           registerComponent(name, node, true, true);
         }
       }

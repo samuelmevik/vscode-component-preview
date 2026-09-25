@@ -66,6 +66,12 @@ export class PreviewManager {
       null,
       this.disposables
     );
+
+    vscode.workspace.onDidSaveTextDocument(
+      (document) => this.handleDocumentSave(document),
+      null,
+      this.disposables
+    );
   }
 
   public isServerRunning(): boolean {
@@ -215,6 +221,17 @@ export class PreviewManager {
           const { level, text, timestamp } = message.payload || {};
           const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
           this.outputChannel.appendLine(`[Console ${timestamp || ''}] ${levelTag} ${text}`);
+        } else if (message.type === 'SWITCH_COMPONENT') {
+          const targetName = message.payload?.componentName;
+          const editor = vscode.window.activeTextEditor;
+          if (editor && targetName && editor.document.fileName === this.currentFilePath) {
+            const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
+            const target = scanResult.components.find((c) => c.name === targetName);
+            if (target) {
+              const allComponentNames = scanResult.components.map((c) => c.name);
+              await this.renderTargetComponent(editor.document, target, false, allComponentNames);
+            }
+          }
         }
       }, null, this.disposables);
     }
@@ -307,7 +324,8 @@ export class PreviewManager {
   private async renderTargetComponent(
     document: vscode.TextDocument,
     target: ScannedComponent,
-    reloadWebview: boolean
+    reloadWebview: boolean,
+    allComponents?: string[]
   ): Promise<void> {
     const fileChanged = this.currentFilePath !== document.fileName;
     const compChanged = this.currentComponent?.name !== target.name;
@@ -321,6 +339,7 @@ export class PreviewManager {
       currentFile: document.fileName,
       currentComponentName: target.name,
       meta: target.meta,
+      allComponents,
       isLocked: this.isLocked,
     });
 
@@ -338,6 +357,7 @@ export class PreviewManager {
           payload: {
             componentName: target.name,
             variants: target.meta.variants,
+            allComponents,
             isLocked: this.isLocked,
           },
         });
@@ -362,7 +382,8 @@ export class PreviewManager {
       return;
     }
 
-    await this.renderTargetComponent(document, scanResult.targetComponent, reloadWebview);
+    const allComponentNames = scanResult.components.map((c) => c.name);
+    await this.renderTargetComponent(document, scanResult.targetComponent, reloadWebview, allComponentNames);
   }
 
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined) {
@@ -381,7 +402,8 @@ export class PreviewManager {
       const cursorLine = editor.selection.active.line + 1;
       const scanResult = scanComponents(editor.document.getText(), editor.document.fileName, cursorLine);
       if (scanResult.targetComponent && scanResult.targetComponent.name !== this.currentComponent?.name) {
-        this.renderTargetComponent(editor.document, scanResult.targetComponent, false);
+        const allComponentNames = scanResult.components.map((c) => c.name);
+        this.renderTargetComponent(editor.document, scanResult.targetComponent, false, allComponentNames);
       }
     }
   }
@@ -394,7 +416,8 @@ export class PreviewManager {
         const scanResult = scanComponents(event.document.getText(), event.document.fileName);
         const lockedComp = scanResult.components.find((c) => c.name === this.lockedComponentName);
         if (lockedComp) {
-          this.renderTargetComponent(event.document, lockedComp, false);
+          const allComponentNames = scanResult.components.map((c) => c.name);
+          this.renderTargetComponent(event.document, lockedComp, false, allComponentNames);
         }
       }
       return;
@@ -404,6 +427,31 @@ export class PreviewManager {
       const editor = vscode.window.activeTextEditor;
       if (editor && editor.document === event.document) {
         this.updatePreviewForEditor(editor, false);
+      }
+    }
+  }
+
+  private async handleDocumentSave(document: vscode.TextDocument) {
+    if (!document.fileName.endsWith('.tsx') && !document.fileName.endsWith('.jsx')) {
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('componentPreview');
+    const autoOpen = config.get<boolean>('autoOpenOnSave', false);
+    if (!autoOpen) {
+      return;
+    }
+
+    const activeEditor = vscode.window.activeTextEditor;
+    if (!this.panel) {
+      if (activeEditor && activeEditor.document === document) {
+        await this.showPreview(activeEditor);
+      }
+    } else {
+      if (this.currentFilePath === document.fileName || !this.isLocked) {
+        if (activeEditor && activeEditor.document === document) {
+          await this.updatePreviewForEditor(activeEditor, true);
+        }
       }
     }
   }

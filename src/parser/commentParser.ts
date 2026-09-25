@@ -6,7 +6,8 @@ export interface PreviewVariant {
   store?: Record<string, any>;
   storePath?: string;
   slice?: string;
-  viewport?: { width?: number; height?: number };
+  viewport?: { width?: number; height?: number } | string;
+  wrapperPath?: string;
   rawYaml?: string;
   parseError?: string;
 }
@@ -85,6 +86,9 @@ export function parsePreviewComments(comments: string[], componentName: string):
           const rawStorePath = parsed.storePath || parsed.storeFile;
           const storePath = typeof rawStorePath === 'string' ? rawStorePath.trim() : undefined;
 
+          const rawWrapperPath = parsed.wrapperPath || parsed.wrapper;
+          const wrapperPath = typeof rawWrapperPath === 'string' ? rawWrapperPath.trim() : undefined;
+
           variants.push({
             name: variantName,
             props,
@@ -92,6 +96,7 @@ export function parsePreviewComments(comments: string[], componentName: string):
             storePath,
             slice: parsed.slice,
             viewport: parsed.viewport,
+            wrapperPath,
             rawYaml: yamlContent,
           });
         } else {
@@ -120,10 +125,14 @@ export function parsePreviewComments(comments: string[], componentName: string):
       store: {},
     });
   } else {
-    // Inherit default storePath from the first variant that defines it, unless explicitly overridden
+    // Inherit default storePath & wrapperPath from the first variant that defines it, unless explicitly overridden
     const defaultStorePath = variants.find(
       (v) => v.storePath && v.storePath !== 'none' && v.storePath !== 'mock'
     )?.storePath;
+
+    const defaultWrapperPath = variants.find(
+      (v) => v.wrapperPath && v.wrapperPath !== 'none'
+    )?.wrapperPath;
 
     for (const v of variants) {
       if (v.storePath === undefined) {
@@ -132,6 +141,14 @@ export function parsePreviewComments(comments: string[], componentName: string):
         }
       } else if (v.storePath === 'none' || v.storePath === 'mock') {
         v.storePath = undefined;
+      }
+
+      if (v.wrapperPath === undefined) {
+        if (defaultWrapperPath) {
+          v.wrapperPath = defaultWrapperPath;
+        }
+      } else if (v.wrapperPath === 'none') {
+        v.wrapperPath = undefined;
       }
     }
   }

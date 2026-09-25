@@ -155,5 +155,11 @@ export function prepareProps(
 
       return Reflect.get(target, propKey, receiver);
     },
+    has(target, propKey) {
+      if (typeof propKey === 'string' && IS_CALLBACK_PROP_REGEX.test(propKey)) {
+        return true;
+      }
+      return Reflect.has(target, propKey);
+    },
   });
 }

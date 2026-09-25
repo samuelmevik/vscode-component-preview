@@ -90,6 +90,24 @@
         "icon": "$(lock)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "componentPreview.openPreview",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "editorTextFocus && resourceExtname =~ /\\.(jsx|tsx)$/"
+      },
+      {
+        "command": "componentPreview.toggleLock",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l"
+      },
+      {
+        "command": "componentPreview.refreshPreview",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r"
+      }
+    ],
     "menus": {
       "editor/title": [
         {
@@ -98,14 +116,24 @@
           "group": "navigation@1"
         },
         {
-          "command": "componentPreview.toggleLock",
+          "command": "componentPreview.refreshPreview",
           "when": "resourceExtname =~ /\\.(jsx|tsx)$/",
           "group": "navigation@2"
         },
         {
-          "command": "componentPreview.stopServer",
+          "command": "componentPreview.openInBrowser",
           "when": "componentPreview.serverRunning && resourceExtname =~ /\\.(jsx|tsx)$/",
           "group": "navigation@3"
+        },
+        {
+          "command": "componentPreview.toggleLock",
+          "when": "resourceExtname =~ /\\.(jsx|tsx)$/",
+          "group": "navigation@4"
+        },
+        {
+          "command": "componentPreview.stopServer",
+          "when": "componentPreview.serverRunning && resourceExtname =~ /\\.(jsx|tsx)$/",
+          "group": "navigation@5"
         }
       ]
     },

@@ -4,16 +4,23 @@ import { Provider } from 'react-redux';
 
 export interface ActionLogItem {
   id: string;
-  source: 'redux' | 'callback' | 'console';
+  source: 'redux' | 'callback' | 'console' | 'network';
   level?: 'log' | 'info' | 'warn' | 'error';
   name: string;
   payload?: any;
+  response?: any;
+  status?: number;
+  statusText?: string;
+  duration?: string;
+  method?: string;
+  url?: string;
   timestamp: string;
 }
 
 interface MockReduxProviderProps {
   storeModule?: any;
   exportName?: string;
+  slice?: string;
   initialState: Record<string, any>;
   onActionDispatched: (item: ActionLogItem) => void;
   children: React.ReactNode;
@@ -122,14 +129,44 @@ function createFallbackStore(initialState: Record<string, any>, onActionDispatch
 export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
   storeModule,
   exportName,
+  slice,
   initialState,
   onActionDispatched,
   children,
 }) => {
   const store = useMemo(() => {
+    const effectiveState =
+      slice && !(slice in initialState)
+        ? { [slice]: initialState }
+        : initialState;
+
     if (storeModule) {
       const storeOrFactory = findStoreOrFactory(storeModule, exportName);
-      const realStore = instantiateStore(storeOrFactory, initialState);
+
+      // Handle slice reducer directly exported from module
+      if (
+        slice &&
+        (!storeOrFactory || typeof storeOrFactory !== 'function' || !storeOrFactory.dispatch)
+      ) {
+        const sliceReducer =
+          storeModule[slice]?.reducer ||
+          storeModule[`${slice}Slice`]?.reducer ||
+          storeModule.reducer ||
+          (typeof storeOrFactory === 'function' && storeOrFactory.length === 2
+            ? storeOrFactory
+            : undefined);
+
+        if (sliceReducer) {
+          const created = configureStore({
+            reducer: { [slice]: sliceReducer },
+            preloadedState: effectiveState,
+          });
+          interceptDispatch(created, onActionDispatched);
+          return created;
+        }
+      }
+
+      const realStore = instantiateStore(storeOrFactory, effectiveState);
 
       if (realStore && typeof realStore.dispatch === 'function') {
         interceptDispatch(realStore, onActionDispatched);
@@ -141,8 +178,8 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
       );
     }
 
-    return createFallbackStore(initialState, onActionDispatched);
-  }, [storeModule, exportName, initialState, onActionDispatched]);
+    return createFallbackStore(effectiveState, onActionDispatched);
+  }, [storeModule, exportName, slice, initialState, onActionDispatched]);
 
   return <Provider store={store}>{children}</Provider>;
 };

@@ -7,12 +7,16 @@ A high-performance VS Code extension providing live in-editor previews of React 
 ## ✨ Features
 
 - ⚡ **Instant In-Editor Preview**: Renders your JSX / TSX components in a live Webview pane without needing to start your entire web application.
-- 💬 **Comment-Driven Mock Data**: Define mock `props` and `store` state directly above your component using clean YAML syntax.
+- 📱 **Responsive Viewport Presets**: Easily test components in **Responsive**, **Mobile** (375 × 667), **Tablet** (768 × 1024), and **Desktop** (1280 × 800) device frames with real dimensions.
+- 🌓 **Canvas Theme Modes**: Switch the preview canvas between **Dark**, **Light**, and **Transparency Checkerboard** backgrounds with one click.
+- 🔍 **Zoom & Pixel Inspection**: Inspect components at 50%, 75%, 100%, 125%, 150%, or 200% scale.
+- 🗂️ **Multi-Component Dropdown**: Switch between any exported component in the current file directly from the preview header.
+- 💬 **Comment-Driven Mock Data**: Define mock `props`, `store`, `slice`, and `viewport` directly above your component using clean YAML syntax.
 - 🎨 **SCSS & CSS Modules Out-of-the-Box**: Native compilation and Hot Module Replacement (HMR) for `.scss` and `*.module.scss` files powered by Vite & Sass.
 - 🔄 **Multi-Variant Tabs**: Switch between different scenarios (e.g. `Default`, `Admin State`, `Logged Out State`, `Error State`) with a single click.
 - 🛡️ **Ephemeral Mock Redux Store**: Safely renders components relying on `useSelector` and `useDispatch` without crashes, side-effects, or singleton pollution.
-- 🎯 **Action & Callback Inspector**: Bottom drawer that records and displays dispatched Redux actions and invoked callback props (`onClick`, `onChange`, etc.) with full payloads and timestamps.
-- 🎯 **Console & Action Inspector**: Bottom drawer that records and displays live `console.log`, `info`, `warn`, and `error` outputs, dispatched Redux actions, and invoked callback props (`onClick`, `onChange`, etc.) with filter tabs, formatted payloads, and timestamps.
+- 🧩 **Provider Wrapper Decorators (`wrapperPath`)**: Wrap components in custom app providers (e.g. ThemeProvider, QueryClientProvider, Router).
+- 🎯 **Console & Action Inspector**: Bottom drawer that records and displays live `console.log`, `info`, `warn`, and `error` outputs, dispatched Redux actions, and invoked callback props with instant text search, filter tabs, copy-to-clipboard, and timestamps.
 - 📺 **VS Code Output Channel Streaming**: Automatically streams all in-preview console logs directly into VS Code's `Component Preview` output channel.
 - 🔒 **Component Lock / Pin**: Freeze and keep the current preview active with a single click, allowing you to browse or edit other files across your codebase without losing your component view.
 - 🛑 **Full Server Lifecycle Control**: Turn off or restart the background Vite server anytime via the editor title bar, status bar, command palette, or in-preview header.
@@ -176,11 +180,22 @@ When the server is stopped while the preview panel is open, a clear status card 
 
 ## ⚙️ Extension Settings
 
-| Setting                              | Default | Description                                                            |
-| :----------------------------------- | :------ | :--------------------------------------------------------------------- |
-| `componentPreview.port`              | `4545`  | Port used by the background preview server.                            |
-| `componentPreview.autoOpenOnSave`    | `false` | Automatically refresh the preview when saving files.                   |
-| `componentPreview.stopServerOnClose` | `false` | Automatically stop the background preview server when panel is closed. |
+| Setting                              | Default | Description                                                                 |
+| :----------------------------------- | :------ | :-------------------------------------------------------------------------- |
+| `componentPreview.port`              | `4545`  | Port used by the background preview server.                                 |
+| `componentPreview.autoOpenOnSave`    | `false` | Automatically refresh the preview when saving files.                        |
+| `componentPreview.stopServerOnClose` | `false` | Automatically stop the background preview server when panel is closed.      |
+| `componentPreview.lockEditorGroup`   | `true`  | Automatically lock the preview editor group to prevent accidental tab swaps.|
+
+---
+
+## ⌨️ Default Keybindings
+
+| Command                           | Windows / Linux | macOS        |
+| :-------------------------------- | :-------------- | :----------- |
+| `Open Component Preview`          | `Ctrl+Alt+P`    | `Cmd+Alt+P`  |
+| `Lock / Unlock Component Preview` | `Ctrl+Alt+L`    | `Cmd+Alt+L`  |
+| `Refresh Preview`                 | `Ctrl+Alt+R`    | `Cmd+Alt+R`  |
 
 ---
 

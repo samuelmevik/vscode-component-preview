@@ -10,6 +10,7 @@ export interface PreviewServerState {
   currentFile: string;
   currentComponentName: string;
   meta: ComponentPreviewMeta;
+  allComponents?: string[];
   isLocked?: boolean;
 }
 
@@ -106,18 +107,71 @@ function generateVirtualEntry(
     })
     .join(',\n              ');
 
+  const cleanWrapperPaths = Array.from(
+    new Set(
+      state.meta.variants
+        .map((v) => (v.wrapperPath ? v.wrapperPath.split('#')[0].trim() : undefined))
+        .filter((wp): wp is string => Boolean(wp))
+    )
+  );
+
+  const wrapperEntries = cleanWrapperPaths.map((cleanPath, index) => {
+    const importVar = `WrapperModule_${index}`;
+    if (cleanPath.startsWith('.')) {
+      const resolved = resolveStoreFile(compDir, cleanPath);
+      if (resolved) {
+        return {
+          cleanPath,
+          importVar,
+          importStatement: `import * as ${importVar} from '/@fs/${resolved.replace(/\\/g, '/')}';`,
+        };
+      }
+      return {
+        cleanPath,
+        importVar,
+        error: `Could not find wrapper file "${cleanPath}" relative to ${normalizedFilePath}`,
+      };
+    }
+    return {
+      cleanPath,
+      importVar,
+      importStatement: `import * as ${importVar} from '${cleanPath}';`,
+    };
+  });
+
+  const wrapperImports = wrapperEntries
+    .filter((e) => e.importStatement)
+    .map((e) => e.importStatement)
+    .join('\n');
+
+  const wrapperModulesMap = wrapperEntries
+    .map((e) => {
+      if (e.error) {
+        return `${JSON.stringify(e.cleanPath)}: { __error__: ${JSON.stringify(e.error)} }`;
+      }
+      return `${JSON.stringify(e.cleanPath)}: ${e.importVar}`;
+    })
+    .join(',\n              ');
+
+  const allComponentsJson = JSON.stringify(state.allComponents || []);
+
   return `
     import React from 'react';
     import ReactDOM from 'react-dom/client';
     import { Harness } from '${harnessImportUrl}';
     import * as UserModule from '${fileImportUrl}';
     ${storeImports}
+    ${wrapperImports}
 
     const SelectedComponent = UserModule['${compName}'] || UserModule.default;
     const initialVariants = ${variantsJson};
     const storeModules = {
       ${storeModulesMap}
     };
+    const wrapperModules = {
+      ${wrapperModulesMap}
+    };
+    const initialAllComponents = ${allComponentsJson};
 
     const rootElement = document.getElementById('root');
     if (rootElement) {
@@ -134,8 +188,10 @@ function generateVirtualEntry(
             ComponentToRender: SelectedComponent,
             userModule: UserModule,
             storeModules: storeModules,
+            wrapperModules: wrapperModules,
             initialComponentName: '${compName}',
             initialVariants: initialVariants,
+            initialAllComponents: initialAllComponents,
             initialIsLocked: ${isLocked}
           })
         );
@@ -326,7 +382,18 @@ export class PreviewViteServer {
     if (this.server) {
       const s = this.server;
       this.server = null;
-      await s.close();
+      try {
+        const httpServer = s.httpServer;
+        if (httpServer && typeof (httpServer as any).closeAllConnections === 'function') {
+          (httpServer as any).closeAllConnections();
+        }
+        await Promise.race([
+          s.close(),
+          new Promise((resolve) => setTimeout(resolve, 800)),
+        ]);
+      } catch (err) {
+        console.warn('[Component Preview] Notice during Vite server close:', err);
+      }
       console.log('[Component Preview] Vite dev server stopped.');
     }
   }

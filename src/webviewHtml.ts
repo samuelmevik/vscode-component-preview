@@ -83,10 +83,8 @@ export function getWebviewContent(previewUrl: string, componentName: string): st
 
     // Forward messages from iframe (Harness) to VS Code extension host
     window.addEventListener('message', (event) => {
-      if (event.data && typeof event.data === 'object') {
-        if (event.data.type === 'TOGGLE_LOCK' || event.data.type === 'STOP_SERVER' || event.data.type === 'CONSOLE_LOG') {
-          vscode.postMessage(event.data);
-        }
+      if (event.data && typeof event.data === 'object' && event.data.type) {
+        vscode.postMessage(event.data);
       }
     });
 
