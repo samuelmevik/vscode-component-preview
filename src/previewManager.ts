@@ -15,6 +15,8 @@ export class PreviewManager {
   private lockedFilePath: string | null = null;
   private lockedComponentName: string | null = null;
 
+  private statusBarItem: vscode.StatusBarItem;
+
   constructor(context: vscode.ExtensionContext) {
     this.extensionContext = context;
     this.outputChannel = vscode.window.createOutputChannel('Component Preview');
@@ -22,9 +24,32 @@ export class PreviewManager {
     const port = config.get<number>('port', 4545);
     this.viteServer = new PreviewViteServer(context.extensionPath, port);
 
+    this.statusBarItem = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      100
+    );
+    this.statusBarItem.command = 'componentPreview.stopServer';
+    this.disposables.push(this.statusBarItem);
+    this.updateServerRunningContext(false);
+
     this.viteServer.onLockToggled = (locked?: boolean) => {
       this.toggleLock(locked);
     };
+
+    this.viteServer.onStopRequested = () => {
+      this.stopServer();
+    };
+
+    vscode.workspace.onDidChangeConfiguration(
+      (e) => {
+        if (e.affectsConfiguration('componentPreview.port')) {
+          const newPort = vscode.workspace.getConfiguration('componentPreview').get<number>('port', 4545);
+          this.viteServer.setDefaultPort(newPort);
+        }
+      },
+      null,
+      this.disposables
+    );
 
     // Watch for document changes & cursor position changes
     vscode.window.onDidChangeActiveTextEditor(
@@ -46,6 +71,86 @@ export class PreviewManager {
     );
   }
 
+  public isServerRunning(): boolean {
+    return this.viteServer.isRunning();
+  }
+
+  public getServerPort(): number {
+    return this.viteServer.getPort();
+  }
+
+  private updateServerRunningContext(running: boolean) {
+    vscode.commands.executeCommand('setContext', 'componentPreview.serverRunning', running);
+  }
+
+  public async startServer(targetEditor?: vscode.TextEditor): Promise<number | null> {
+    const editor = targetEditor || vscode.window.activeTextEditor;
+    let workspaceRoot: string;
+
+    if (editor) {
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+      workspaceRoot = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(editor.document.fileName);
+    } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+    } else {
+      workspaceRoot = process.cwd();
+    }
+
+    try {
+      const port = await this.viteServer.start(workspaceRoot);
+      this.outputChannel.appendLine(`[Preview] Vite dev server ready on port ${port}`);
+      this.statusBarItem.text = `$(server) Preview: ${port}`;
+      this.statusBarItem.tooltip = `Component Preview server running on http://127.0.0.1:${port} (Click to stop server)`;
+      this.statusBarItem.command = 'componentPreview.stopServer';
+      this.statusBarItem.show();
+      this.updateServerRunningContext(true);
+      return port;
+    } catch (err: any) {
+      this.outputChannel.appendLine(`[Preview Error] Failed to start Vite server: ${err.message}`);
+      vscode.window.showErrorMessage(`Failed to start preview server: ${err.message}`);
+      return null;
+    }
+  }
+
+  public async stopServer(): Promise<void> {
+    if (!this.viteServer.isRunning()) {
+      vscode.window.showInformationMessage('Component preview server is not currently running.');
+      return;
+    }
+
+    try {
+      await this.viteServer.stop();
+      this.outputChannel.appendLine('[Preview] Vite dev server stopped.');
+      this.statusBarItem.hide();
+      this.updateServerRunningContext(false);
+
+      if (this.panel) {
+        this.panel.webview.html = this.getServerStoppedHtml();
+      }
+
+      vscode.window.showInformationMessage('Component preview server stopped.');
+    } catch (err: any) {
+      this.outputChannel.appendLine(`[Preview Error] Failed to stop Vite server: ${err.message}`);
+      vscode.window.showErrorMessage(`Failed to stop preview server: ${err.message}`);
+    }
+  }
+
+  public async restartServer(): Promise<void> {
+    this.outputChannel.appendLine('[Preview] Restarting preview server...');
+    if (this.viteServer.isRunning()) {
+      await this.viteServer.stop();
+      this.statusBarItem.hide();
+      this.updateServerRunningContext(false);
+    }
+    const port = await this.startServer();
+    if (port) {
+      if (this.panel && vscode.window.activeTextEditor) {
+        await this.updatePreviewForEditor(vscode.window.activeTextEditor, true);
+      }
+      vscode.window.showInformationMessage(`Component preview server restarted on port ${port}.`);
+    }
+  }
+
   public async showPreview(editor?: vscode.TextEditor): Promise<void> {
     const targetEditor = editor || vscode.window.activeTextEditor;
     if (!targetEditor) {
@@ -62,17 +167,12 @@ export class PreviewManager {
     this.outputChannel.appendLine(`[Preview] Opening preview for ${document.fileName}`);
 
     // Ensure server is started
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const workspaceRoot = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(document.fileName);
-
-    try {
-      const port = await this.viteServer.start(workspaceRoot);
-      this.outputChannel.appendLine(`[Preview] Vite dev server ready on port ${port}`);
-    } catch (err: any) {
-      this.outputChannel.appendLine(`[Preview Error] Failed to start Vite server: ${err.message}`);
-      vscode.window.showErrorMessage(`Failed to start preview server: ${err.message}`);
+    const port = await this.startServer(targetEditor);
+    if (!port) {
       return;
     }
+
+    const isNewPanel = !this.panel;
 
     if (!this.panel) {
       this.panel = vscode.window.createWebviewPanel(
@@ -86,13 +186,22 @@ export class PreviewManager {
         }
       );
 
-      this.panel.onDidDispose(() => {
+      this.panel.onDidDispose(async () => {
         this.panel = null;
+        const config = vscode.workspace.getConfiguration('componentPreview');
+        const autoStop = config.get<boolean>('stopServerOnClose', false);
+        if (autoStop && this.viteServer.isRunning()) {
+          await this.stopServer();
+        }
       }, null, this.disposables);
 
-      this.panel.webview.onDidReceiveMessage((message) => {
+      this.panel.webview.onDidReceiveMessage(async (message) => {
         if (message.type === 'TOGGLE_LOCK') {
           this.toggleLock(message.payload?.locked);
+        } else if (message.type === 'START_SERVER') {
+          await this.showPreview();
+        } else if (message.type === 'STOP_SERVER') {
+          await this.stopServer();
         } else if (message.type === 'CONSOLE_LOG') {
           const { level, text, timestamp } = message.payload || {};
           const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
@@ -101,7 +210,20 @@ export class PreviewManager {
       }, null, this.disposables);
     }
 
-    this.panel.reveal(vscode.ViewColumn.Beside);
+    if (isNewPanel) {
+      this.panel.reveal(vscode.ViewColumn.Beside, false);
+      const config = vscode.workspace.getConfiguration('componentPreview');
+      const lockGroup = config.get<boolean>('lockEditorGroup', true);
+      if (lockGroup) {
+        await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
+      }
+      if (targetEditor) {
+        await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn ?? vscode.ViewColumn.One, false);
+      }
+    } else {
+      this.panel.reveal(vscode.ViewColumn.Beside, true);
+    }
+
     await this.updatePreviewForEditor(targetEditor, true);
   }
 
@@ -160,6 +282,12 @@ export class PreviewManager {
   }
 
   public async openInExternalBrowser(): Promise<void> {
+    if (!this.viteServer.isRunning()) {
+      const port = await this.startServer();
+      if (!port) {
+        return;
+      }
+    }
     const url = this.viteServer.getPreviewUrl();
     const uri = vscode.Uri.parse(url);
     await vscode.env.openExternal(uri);
@@ -367,8 +495,7 @@ export class PreviewManager {
     // Forward messages from iframe (Harness) to VS Code extension host
     window.addEventListener('message', (event) => {
       if (event.data && typeof event.data === 'object') {
-        if (event.data.type === 'TOGGLE_LOCK') {
-        if (event.data.type === 'TOGGLE_LOCK' || event.data.type === 'CONSOLE_LOG') {
+        if (event.data.type === 'TOGGLE_LOCK' || event.data.type === 'STOP_SERVER' || event.data.type === 'CONSOLE_LOG') {
           vscode.postMessage(event.data);
         }
       }
@@ -385,9 +512,104 @@ export class PreviewManager {
 </html>`;
   }
 
+  private getServerStoppedHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #1e1e1e;
+      color: #cccccc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      box-sizing: border-box;
+      padding: 24px;
+    }
+    .card {
+      background: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 8px;
+      padding: 32px 36px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 360px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+    .icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(241, 76, 76, 0.15);
+      color: #f14c4c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    p {
+      margin: 0 0 20px 0;
+      font-size: 13px;
+      color: #999999;
+      line-height: 1.5;
+    }
+    .btn-start {
+      background-color: #0e639c;
+      color: #ffffff;
+      border: none;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background-color 0.15s ease;
+    }
+    .btn-start:hover {
+      background-color: #1177bb;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🛑</div>
+    <h2>Preview Server Stopped</h2>
+    <p>The background Vite preview server is currently turned off.</p>
+    <button class="btn-start" id="start-btn">▶ Start Preview Server</button>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    document.getElementById('start-btn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'START_SERVER' });
+    });
+  </script>
+</body>
+</html>`;
+  }
+
   public dispose() {
     this.viteServer.stop();
     this.panel?.dispose();
+    this.statusBarItem.dispose();
     this.outputChannel.dispose();
     for (const d of this.disposables) {
       d.dispose();

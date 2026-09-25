@@ -54,12 +54,55 @@ async function testServer() {
       console.error('Entry body:\n', entryRes.body);
       throw new Error(`Failed to load virtual entry module: status ${entryRes.statusCode}`);
     }
-    console.log('✅ /__preview_entry__.tsx virtual entrypoint check passed');
+    if (!entryRes.body.includes('StoreModule_0') || !entryRes.body.includes('storeModules')) {
+      console.error('Entry body:\n', entryRes.body);
+      throw new Error('Virtual entry module did not include StoreModule_0 or storeModules map!');
+    }
+    console.log('✅ /__preview_entry__.tsx virtual entrypoint and storeModules check passed');
 
     console.log('\n🎉 Vite dev server, SCSS pipeline, and virtual entrypoint all verified successfully!');
+
+    // 3. Verify server.isRunning()
+    if (!server.isRunning()) {
+      throw new Error('server.isRunning() returned false when running');
+    }
+    console.log('✅ server.isRunning() verified');
+
+    // 4. Test stop_server API endpoint
+    let stopRequested = false;
+    server.onStopRequested = () => {
+      stopRequested = true;
+    };
+
+    console.log('Posting to /__preview_api/stop_server ...');
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        `http://127.0.0.1:${port}/__preview_api/stop_server`,
+        { method: 'POST' },
+        (res) => {
+          if (res.statusCode === 200) {
+            resolve();
+          } else {
+            reject(new Error(`stop_server returned status ${res.statusCode}`));
+          }
+        }
+      );
+      req.on('error', reject);
+      req.end();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!stopRequested) {
+      throw new Error('onStopRequested callback was not triggered');
+    }
+    console.log('✅ /__preview_api/stop_server endpoint verified');
+
   } finally {
     await server.stop();
-    console.log('Vite server stopped.');
+    if (server.isRunning()) {
+      throw new Error('server.isRunning() returned true after stop()');
+    }
+    console.log('✅ Vite server stopped and isRunning() is false.');
     process.exit(0);
   }
 }

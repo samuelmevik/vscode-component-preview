@@ -105,6 +105,31 @@ body {
         }
       }
     }
+.preview-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  outline: none;
+  background: rgba(241, 76, 76, 0.1);
+  border: 1px solid rgba(241, 76, 76, 0.25);
+  color: #ff9999;
+
+  .power-icon {
+    color: #f14c4c;
+  }
+
+  &:hover {
+    background: rgba(241, 76, 76, 0.25);
+    border-color: rgba(241, 76, 76, 0.5);
+    color: #ffffff;
+  }
+}
   }
 
   .variant-tabs {

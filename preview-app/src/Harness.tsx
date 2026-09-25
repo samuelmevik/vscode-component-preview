@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Component, Layers, Lock, Unlock } from 'lucide-react';
+import { Component, Layers, Lock, Unlock, Power } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
 import { ActionPanel } from './ActionPanel';
@@ -10,12 +10,15 @@ export interface PreviewVariantData {
   name: string;
   props?: Record<string, any>;
   store?: Record<string, any>;
+  storePath?: string;
   slice?: string;
   parseError?: string;
 }
 
 interface HarnessProps {
   ComponentToRender: React.ComponentType<any>;
+  userModule?: Record<string, any>;
+  storeModules?: Record<string, any>;
   initialComponentName: string;
   initialVariants: PreviewVariantData[];
   initialIsLocked?: boolean;
@@ -23,6 +26,8 @@ interface HarnessProps {
 
 export const Harness: React.FC<HarnessProps> = ({
   ComponentToRender,
+  userModule = {},
+  storeModules = {},
   initialComponentName,
   initialVariants,
   initialIsLocked = false,
@@ -82,9 +87,33 @@ export const Harness: React.FC<HarnessProps> = ({
     });
   }, []);
 
+  const handleStopServer = useCallback(() => {
+    // Post to parent Webview container
+    window.parent.postMessage({ type: 'STOP_SERVER' }, '*');
+    // Post to background dev server as well
+    fetch('/__preview_api/stop_server', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).catch(() => { });
+  }, []);
+
   const activeVariant = useMemo(() => {
-    return variants[activeVariantIndex] || variants[0] || { name: 'Default', props: {}, store: {} };
-  }, [variants, activeVariantIndex]);
+    const raw = variants[activeVariantIndex] || variants[0] || { name: 'Default', props: {}, store: {} };
+    let resolvedStore = raw.store;
+    if (typeof resolvedStore === 'string' && userModule && resolvedStore in userModule) {
+      resolvedStore = userModule[resolvedStore];
+    }
+    let resolvedProps = raw.props;
+    if (typeof resolvedProps === 'string' && userModule && resolvedProps in userModule) {
+      resolvedProps = userModule[resolvedProps];
+    }
+    return {
+      ...raw,
+      props: resolvedProps,
+      store: resolvedStore,
+      storePath: raw.storePath,
+    };
+  }, [variants, activeVariantIndex, userModule]);
 
   const addActionLog = useCallback((item: ActionLogItem) => {
     setActionLogs((prev) => [item, ...prev.slice(0, 49)]); // keep last 50 actions
@@ -102,16 +131,161 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   // Construct props with auto-mocked callback proxies (e.g. onClick, onChange)
+  // and resolve file exports, function expressions, HTML markup, and children
   const preparedProps = useMemo(() => {
     const rawProps = { ...(activeVariant.props || {}) };
+
+    const resolveChildValue = (val: any): any => {
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+
+        // 1. Exported component from file (e.g. children: SparkleIcon)
+        if (userModule && trimmed in userModule) {
+          const fileExport = userModule[trimmed];
+          if (typeof fileExport === 'function' && /^[A-Z]/.test(trimmed)) {
+            return React.createElement(fileExport);
+          }
+          return fileExport;
+        }
+
+        // 2. HTML markup string (e.g. <span>Save <strong>Now</strong></span>)
+        if (/<[a-z][\s\S]*>/i.test(trimmed)) {
+          return React.createElement('span', {
+            dangerouslySetInnerHTML: { __html: trimmed },
+          });
+        }
+
+        return val;
+      }
+
+      // 3. Array of children
+      if (Array.isArray(val)) {
+        return val.map((item, idx) => {
+          const resolved = resolveChildValue(item);
+          if (React.isValidElement(resolved)) {
+            return React.cloneElement(resolved, { key: idx });
+          }
+          return resolved;
+        });
+      }
+
+      return val;
+    };
+
+    // Resolve children if specified (unless it's an arrow function / render prop)
+    if (rawProps.children !== undefined) {
+      const isRenderProp =
+        typeof rawProps.children === 'string' &&
+        (/^(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>/.test(rawProps.children.trim()) ||
+          /^(?:async\s+)?function\s*\(/.test(rawProps.children.trim()));
+
+      if (!isRenderProp) {
+        rawProps.children = resolveChildValue(rawProps.children);
+      }
+    }
+
+    for (const [key, value] of Object.entries(rawProps)) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+
+        // 1. Direct reference to an exported function, component, or variable in the file
+        if (userModule && trimmed in userModule) {
+          const fileExport = userModule[trimmed];
+          if (typeof fileExport === 'function') {
+            // If it's a component (starts with capital) and passed as an icon or element prop
+            if (/^[A-Z]/.test(trimmed) && key !== 'Component' && !key.startsWith('on')) {
+              rawProps[key] = React.createElement(fileExport);
+              continue;
+            }
+
+            rawProps[key] = (...args: any[]) => {
+              const sanitizedArgs = args.map((arg) => {
+                if (arg && typeof arg === 'object' && 'nativeEvent' in arg) {
+                  return `[SyntheticEvent ${arg.type}]`;
+                }
+                return arg;
+              });
+
+              addActionLog({
+                id: Math.random().toString(36).substring(2, 9),
+                source: 'callback',
+                name: `${key} -> ${trimmed}()`,
+                payload: sanitizedArgs.length === 1 ? sanitizedArgs[0] : sanitizedArgs,
+                timestamp: new Date().toLocaleTimeString(),
+              });
+
+              return fileExport(...args);
+            };
+          } else {
+            rawProps[key] = fileExport;
+          }
+          continue;
+        }
+
+        // 2. Function expressions or arrow functions (e.g. (e) => handleButtonClick(e), () => alert(1), or render props)
+        const isFunction =
+          /^(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>/.test(trimmed) ||
+          /^(?:async\s+)?function\s*\(/.test(trimmed);
+
+        if (isFunction) {
+          try {
+            // Provide all file exports and console in scope
+            const scope = { ...(userModule || {}), console };
+            const parsedFn = new Function('scope', `with (scope) { return (${trimmed}); }`)(scope);
+            if (typeof parsedFn === 'function') {
+              rawProps[key] = (...args: any[]) => {
+                const sanitizedArgs = args.map((arg) => {
+                  if (arg && typeof arg === 'object' && 'nativeEvent' in arg) {
+                    return `[SyntheticEvent ${arg.type}]`;
+                  }
+                  return arg;
+                });
+
+                addActionLog({
+                  id: Math.random().toString(36).substring(2, 9),
+                  source: 'callback',
+                  name: `${key}()`,
+                  payload: sanitizedArgs.length === 1 ? sanitizedArgs[0] : sanitizedArgs,
+                  timestamp: new Date().toLocaleTimeString(),
+                });
+
+                return parsedFn(...args);
+              };
+            }
+          } catch (e) {
+            console.warn(`[Component Preview] Failed to parse function prop "${key}":`, e);
+          }
+        }
+      }
+    }
 
     // Create a proxy that catches any undefined `on*` callbacks requested by the component
     return new Proxy(rawProps, {
       get(target, propKey, receiver) {
         if (typeof propKey === 'string') {
-          // If already defined in mock props, return it
+          // If already defined in mock props
           if (propKey in target) {
-            return Reflect.get(target, propKey, receiver);
+            const val = Reflect.get(target, propKey, receiver);
+            // If the prop is an on* callback, but the value is a string that wasn't resolved to a function, wrap it
+            if (/^on[A-Z]/.test(propKey) && typeof val !== 'function') {
+              return (...args: any[]) => {
+                const sanitizedArgs = args.map((arg) => {
+                  if (arg && typeof arg === 'object' && 'nativeEvent' in arg) {
+                    return `[SyntheticEvent ${arg.type}]`;
+                  }
+                  return arg;
+                });
+
+                addActionLog({
+                  id: Math.random().toString(36).substring(2, 9),
+                  source: 'callback',
+                  name: `${propKey} ("${val}")()`,
+                  payload: sanitizedArgs.length === 1 ? sanitizedArgs[0] : sanitizedArgs,
+                  timestamp: new Date().toLocaleTimeString(),
+                });
+              };
+            }
+            return val;
           }
 
           // Auto-mock any prop starting with 'on' followed by a capital letter
@@ -137,7 +311,7 @@ export const Harness: React.FC<HarnessProps> = ({
         return Reflect.get(target, propKey, receiver);
       },
     });
-  }, [activeVariant.props, addActionLog]);
+  }, [activeVariant.props, userModule, addActionLog]);
 
   return (
     <div className="preview-container">
@@ -158,6 +332,14 @@ export const Harness: React.FC<HarnessProps> = ({
           >
             {isLocked ? <Lock size={12} className="lock-icon" /> : <Unlock size={12} className="lock-icon" />}
             <span>{isLocked ? 'Locked' : 'Lock'}</span>
+          </button>
+          <button
+            className="preview-stop-btn"
+            onClick={handleStopServer}
+            title="Stop preview server"
+          >
+            <Power size={12} className="power-icon" />
+            <span>Stop Server</span>
           </button>
         </div>
 
@@ -186,16 +368,39 @@ export const Harness: React.FC<HarnessProps> = ({
               </div>
               <p className="preview-error-message">{activeVariant.parseError}</p>
             </div>
-          ) : (
-            <MockReduxProvider
-              initialState={activeVariant.store || {}}
-              onActionDispatched={addActionLog}
-            >
-              <div className="preview-component-host">
-                <ComponentToRender {...preparedProps} />
-              </div>
-            </MockReduxProvider>
-          )}
+          ) : (() => {
+            const activeStorePath = activeVariant.storePath;
+            const cleanStorePath = activeStorePath ? activeStorePath.split('#')[0].trim() : undefined;
+            const activeStoreModule = cleanStorePath && storeModules ? storeModules[cleanStorePath] : undefined;
+            const activeStoreError = activeStoreModule?.__error__;
+            const storeExportName = activeStorePath && activeStorePath.includes('#')
+              ? activeStorePath.split('#')[1]?.trim()
+              : undefined;
+
+            if (activeStoreError) {
+              return (
+                <div className="preview-error-card">
+                  <div className="preview-error-header">
+                    <h3>Redux Store Resolution Error</h3>
+                  </div>
+                  <p className="preview-error-message">{activeStoreError}</p>
+                </div>
+              );
+            }
+
+            return (
+              <MockReduxProvider
+                storeModule={activeStoreModule}
+                exportName={storeExportName}
+                initialState={activeVariant.store || {}}
+                onActionDispatched={addActionLog}
+              >
+                <div className="preview-component-host">
+                  <ComponentToRender {...preparedProps} />
+                </div>
+              </MockReduxProvider>
+            );
+          })()}
         </ErrorBoundary>
       </main>
 

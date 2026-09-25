@@ -16,6 +16,7 @@ export interface RootState {
 }
 
 /* @preview: Admin User
+storePath: "./store"
 store:
   auth:
     isLoggedIn: true
@@ -88,6 +89,8 @@ export const UserProfile: React.FC = () => {
           {role}
         </span>
       </div>
+
+      <p>hej</p>
 
       <div className={styles.actions}>
         <button

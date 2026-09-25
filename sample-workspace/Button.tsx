@@ -54,7 +54,7 @@ props:
   label: "Delete Account"
   variant: "danger"
   disabled: false
-  onClick: (event) => { console.log("Button clicked!"); }
+  onClick: onClick
 */
 /* @preview: Disabled State
 props:
@@ -72,10 +72,25 @@ export const Button1: React.FC<ButtonProps> = ({
     <button
       className={`${styles.button} ${styles[variant]} ${disabled ? styles.disabled : ''}`}
       disabled={disabled}
-      onClick={() => console.log("Button1 clicked!")}
+      onClick={onClick}
     >
-      {label + "1"}
+      {label + "4"}
     </button>
   );
 };
+export const Test1 = () => <Button1 label="Test Button" variant="primary" disabled={false} onClick={() => console.log('Button clicked!')} />;
 
+/* @preview: Test Component
+props:
+  children:
+  - Test1
+  - Test1
+*/
+export const Test = ({ children }) => {
+  return (
+    <div>
+      1234
+      {children}
+    </div>
+  )
+}

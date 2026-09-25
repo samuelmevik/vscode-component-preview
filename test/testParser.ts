@@ -36,8 +36,80 @@ function test() {
   console.log(`Target: ${profile.name}`);
   console.log(`Variants count: ${profile.meta.variants.length}`);
   profile.meta.variants.forEach((v) => {
-    console.log(`- Variant [${v.name}]: store =`, JSON.stringify(v.store));
+    console.log(`- Variant [${v.name}]: storePath = ${v.storePath}, store =`, JSON.stringify(v.store));
   });
+
+  console.log('\n--- Testing Children Prop Handling ---');
+  const cardSnippet = `
+  /* @preview: With Top-Level Children
+  children: "Top level card text"
+  props:
+    title: "Card 1"
+  */
+  /* @preview: With Props Children
+  props:
+    title: "Card 2"
+    children: "<span>Inner HTML</span>"
+  */
+  export const Card: React.FC<{ title: string; children?: React.ReactNode }> = () => null;
+  `;
+  const cardResult = scanComponents(cardSnippet, 'Card.tsx');
+  const cardComp = cardResult.targetComponent;
+  if (!cardComp || cardComp.meta.variants.length !== 2) {
+    console.error('Card component parsing failed!');
+    process.exit(1);
+  }
+  console.log('- Variant 1 children:', cardComp.meta.variants[0].props?.children);
+  console.log('- Variant 2 children:', cardComp.meta.variants[1].props?.children);
+  if (cardComp.meta.variants[0].props?.children !== 'Top level card text' ||
+    cardComp.meta.variants[1].props?.children !== '<span>Inner HTML</span>') {
+    console.error('Children assertion failed!');
+    process.exit(1);
+  }
+
+  console.log('\n--- Testing storePath Handling ---');
+  const storeSnippet = `
+  /* @preview: Admin User
+  storePath: "../store"
+  store:
+    auth:
+      isLoggedIn: true
+  */
+  /* @preview: Inherited Store
+  store:
+    auth:
+      isLoggedIn: false
+  */
+  /* @preview: Custom Named Store
+  storePath: "./authStore#setupAuth"
+  */
+  /* @preview: Explicit Mock Store
+  storePath: none
+  store:
+    auth: null
+  */
+  export const UserWidget: React.FC = () => null;
+  `;
+  const storeResult = scanComponents(storeSnippet, 'UserWidget.tsx');
+  const storeComp = storeResult.targetComponent;
+  if (!storeComp || storeComp.meta.variants.length !== 4) {
+    console.error('storePath component parsing failed!');
+    process.exit(1);
+  }
+  console.log('- Variant 1 storePath:', storeComp.meta.variants[0].storePath);
+  console.log('- Variant 2 storePath (inherited):', storeComp.meta.variants[1].storePath);
+  console.log('- Variant 3 storePath:', storeComp.meta.variants[2].storePath);
+  console.log('- Variant 4 storePath (explicit none):', storeComp.meta.variants[3].storePath);
+
+  if (
+    storeComp.meta.variants[0].storePath !== '../store' ||
+    storeComp.meta.variants[1].storePath !== '../store' ||
+    storeComp.meta.variants[2].storePath !== './authStore#setupAuth' ||
+    storeComp.meta.variants[3].storePath !== undefined
+  ) {
+    console.error('storePath assertion failed!');
+    process.exit(1);
+  }
 
   console.log('\n✅ All parser tests passed successfully!');
 }

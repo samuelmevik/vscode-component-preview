@@ -28,7 +28,11 @@
   ],
   "activationEvents": [
     "onLanguage:javascriptreact",
-    "onLanguage:typescriptreact"
+    "onLanguage:typescriptreact",
+    "onCommand:componentPreview.openPreview",
+    "onCommand:componentPreview.stopServer",
+    "onCommand:componentPreview.startServer",
+    "onCommand:componentPreview.restartServer"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -36,6 +40,24 @@
       {
         "command": "componentPreview.openPreview",
         "title": "Open Component Preview",
+        "category": "Component Preview",
+        "icon": "$(play)"
+      },
+      {
+        "command": "componentPreview.stopServer",
+        "title": "Stop Preview Server",
+        "category": "Component Preview",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "componentPreview.restartServer",
+        "title": "Restart Preview Server",
+        "category": "Component Preview",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "componentPreview.startServer",
+        "title": "Start Preview Server",
         "category": "Component Preview",
         "icon": "$(play)"
       },
@@ -69,6 +91,11 @@
           "command": "componentPreview.toggleLock",
           "when": "resourceExtname =~ /\\.(jsx|tsx)$/",
           "group": "navigation@2"
+        },
+        {
+          "command": "componentPreview.stopServer",
+          "when": "componentPreview.serverRunning && resourceExtname =~ /\\.(jsx|tsx)$/",
+          "group": "navigation@3"
         }
       ]
     },
@@ -84,6 +111,16 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically refresh preview when saving JSX/TSX files"
+        },
+        "componentPreview.stopServerOnClose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically stop the background preview server when the preview panel is closed"
+        },
+        "componentPreview.lockEditorGroup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically lock the preview editor group so files selected in navigation do not replace the preview"
         }
       }
     }

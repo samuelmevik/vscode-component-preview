@@ -17,6 +17,40 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const stopServerCmd = vscode.commands.registerCommand(
+    'componentPreview.stopServer',
+    async () => {
+      if (previewManager) {
+        await previewManager.stopServer();
+      }
+    }
+  );
+
+  const startServerCmd = vscode.commands.registerCommand(
+    'componentPreview.startServer',
+    async () => {
+      if (previewManager) {
+        if (previewManager.isServerRunning()) {
+          vscode.window.showInformationMessage(`Component preview server is already running on port ${previewManager.getServerPort()}.`);
+          return;
+        }
+        const port = await previewManager.startServer();
+        if (port) {
+          vscode.window.showInformationMessage(`Component preview server started on port ${port}.`);
+        }
+      }
+    }
+  );
+
+  const restartServerCmd = vscode.commands.registerCommand(
+    'componentPreview.restartServer',
+    async () => {
+      if (previewManager) {
+        await previewManager.restartServer();
+      }
+    }
+  );
+
   const refreshPreviewCmd = vscode.commands.registerCommand(
     'componentPreview.refreshPreview',
     async () => {
@@ -44,11 +78,20 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  context.subscriptions.push(openPreviewCmd, refreshPreviewCmd, openInBrowserCmd, toggleLockCmd, {
-    dispose: () => {
-      previewManager?.dispose();
-    },
-  });
+  context.subscriptions.push(
+    openPreviewCmd,
+    stopServerCmd,
+    startServerCmd,
+    restartServerCmd,
+    refreshPreviewCmd,
+    openInBrowserCmd,
+    toggleLockCmd,
+    {
+      dispose: () => {
+        previewManager?.dispose();
+      },
+    }
+  );
 }
 
 export function deactivate() {
