@@ -153,6 +153,54 @@ function test() {
   }
   console.log('- Anonymous arrow default export detected:', arrowComp.name);
 
+  console.log('\n--- Testing AST Scanner on CatGallery.tsx (Multi-component with Redux & RTK Query) ---');
+  const catGalleryPath = path.resolve(__dirname, '../sample-workspace/CatGallery.tsx');
+  const catGalleryCode = fs.readFileSync(catGalleryPath, 'utf8');
+  const catGalleryResult = scanComponents(catGalleryCode, catGalleryPath);
+
+  console.log(`Found ${catGalleryResult.components.length} components in CatGallery.tsx.`);
+  console.log('All scanned component names:', catGalleryResult.components.map((c) => c.name));
+  const expectedComps = [
+    'CatImageCard',
+    'CatTagSelector',
+    'CatSaysInput',
+    'CatFavoritesDrawer',
+    'CatStatsBar',
+    'CatGallery',
+  ];
+  for (const name of expectedComps) {
+    const found = catGalleryResult.components.find((c) => c.name === name);
+    if (!found) {
+      console.error(`Component ${name} not found in CatGallery.tsx!`);
+      process.exit(1);
+    }
+    console.log(`- Component [${found.name}]: ${found.meta.variants.length} variant(s), isDefault: ${found.isDefaultExport}`);
+  }
+
+  const mainComp = catGalleryResult.targetComponent;
+  if (!mainComp || mainComp.name !== 'CatGallery') {
+    console.error('Target component in CatGallery.tsx is not CatGallery!');
+    process.exit(1);
+  }
+  if (mainComp.meta.variants.length !== 4) {
+    console.error(`Expected 4 variants for CatGallery, got ${mainComp.meta.variants.length}`);
+    process.exit(1);
+  }
+
+  // Verify storePath and preloaded state
+  const variant1 = mainComp.meta.variants[0];
+  const variant2 = mainComp.meta.variants[1];
+  console.log('- CatGallery Variant 1 storePath:', variant1.storePath);
+  console.log('- CatGallery Variant 2 storePath:', variant2.storePath, 'favorites count in store:', variant2.store?.catGallery?.favorites?.length);
+  if (variant1.storePath !== './catStore' || variant2.storePath !== './catStore') {
+    console.error('CatGallery storePath assertion failed!');
+    process.exit(1);
+  }
+  if (variant2.store?.catGallery?.favorites?.length !== 2) {
+    console.error('CatGallery preloaded favorites assertion failed!');
+    process.exit(1);
+  }
+
   console.log('\n✅ All parser tests passed successfully!');
 }
 

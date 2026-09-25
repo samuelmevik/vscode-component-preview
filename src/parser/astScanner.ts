@@ -19,7 +19,25 @@ export interface ScanResult {
 }
 
 function isComponentIdentifier(name: string): boolean {
-  return /^[A-Z][a-zA-Z0-9_]*$/.test(name);
+  if (!/^[A-Z][a-zA-Z0-9]*$/.test(name)) return false;
+  // Exclude SCREAMING_SNAKE_CASE or ALL_CAPS constants (e.g. PRESETS, POPULAR_TAGS, API_KEY)
+  if (/^[A-Z0-9_]{2,}$/.test(name) && !/[a-z]/.test(name)) return false;
+  return true;
+}
+
+function isComponentDeclaration(declaration: ts.VariableDeclaration): boolean {
+  if (declaration.type) {
+    const typeText = declaration.type.getText();
+    if (/^(React\.)?(FC|FunctionComponent|ComponentType|NamedExoticComponent)\b/.test(typeText)) {
+      return true;
+    }
+  }
+  const init = declaration.initializer;
+  if (!init) return false;
+  if (ts.isArrowFunction(init) || ts.isFunctionExpression(init) || ts.isCallExpression(init)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -78,33 +96,39 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
 
     // 1. Function Declarations: export function MyComponent(...) {} or export default function(...) {}
     if (ts.isFunctionDeclaration(node)) {
-      const name =
-        node.name?.text ||
-        (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
+      if (node.parent === sourceFile) {
+        const name =
+          node.name?.text ||
+          (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
 
-      if (name && isComponentIdentifier(name)) {
-        registerComponent(name, node, isDefault, isExported);
+        if (name && isComponentIdentifier(name)) {
+          registerComponent(name, node, isDefault, isExported);
+        }
       }
     }
 
     // 2. Class Declarations: export class MyComponent extends React.Component {}
     else if (ts.isClassDeclaration(node)) {
-      const name =
-        node.name?.text ||
-        (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
+      if (node.parent === sourceFile) {
+        const name =
+          node.name?.text ||
+          (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
 
-      if (name && isComponentIdentifier(name)) {
-        registerComponent(name, node, isDefault, isExported);
+        if (name && isComponentIdentifier(name)) {
+          registerComponent(name, node, isDefault, isExported);
+        }
       }
     }
 
     // 3. Variable Statements: export const MyComponent = (...) => {}
     else if (ts.isVariableStatement(node)) {
-      for (const declaration of node.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name)) {
-          const name = declaration.name.text;
-          if (isComponentIdentifier(name)) {
-            registerComponent(name, node, isDefault, isExported);
+      if (node.parent === sourceFile) {
+        for (const declaration of node.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) {
+            const name = declaration.name.text;
+            if (isComponentIdentifier(name) && isComponentDeclaration(declaration)) {
+              registerComponent(name, node, isDefault, isExported);
+            }
           }
         }
       }

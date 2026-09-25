@@ -168,7 +168,7 @@
     "build": "node esbuild.config.js --production",
     "watch": "node esbuild.config.js --watch",
     "compile": "tsc -p ./ --noEmit",
-    "test": "npx tsx test/testParser.ts && npx tsx test/testViteServer.ts",
+    "test": "npx tsx test/testParser.ts && npx tsx test/testNetworkInterceptor.ts && npx tsx test/testViteServer.ts",
     "package": "vsce package",
     "publish": "vsce publish"
   },

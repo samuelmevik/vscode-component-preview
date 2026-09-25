@@ -37,8 +37,11 @@ store:
 /* @preview: Logged Out State
 store:
   auth:
-    isLoggedIn: false
-    user: null
+    isLoggedIn: true
+    user:
+      name: "John Doe"
+      email: "john.doe@example.com"
+      role: "member"
 */
 export const UserProfile: React.FC = () => {
   const dispatch = useDispatch();

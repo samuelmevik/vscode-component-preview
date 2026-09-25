@@ -1,0 +1,498 @@
+$primary: #38bdf8;
+$primary-hover: #0ea5e9;
+$accent: #f43f5e;
+$bg-card: rgba(30, 41, 59, 0.7);
+$border-card: rgba(255, 255, 255, 0.1);
+$text-main: #f1f5f9;
+$text-muted: #94a3b8;
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px;
+  background: $bg-card;
+  backdrop-filter: blur(12px);
+  border: 1px solid $border-card;
+  border-radius: 16px;
+  color: $text-main;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .titleGroup {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .icon {
+      font-size: 22px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+  }
+
+  .apiUrl {
+    font-size: 11px;
+    color: $primary;
+    text-decoration: none;
+    background: rgba(56, 189, 248, 0.1);
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: rgba(56, 189, 248, 0.2);
+    }
+  }
+}
+
+/* Card Component */
+.card {
+  position: relative;
+  background: #0f172a;
+  border: 1px solid $border-card;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+
+  .imageWrapper {
+    position: relative;
+    width: 100%;
+    height: 280px;
+    background: #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+
+      &:hover {
+        transform: scale(1.02);
+      }
+    }
+
+    .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: $text-muted;
+      font-size: 13px;
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-top-color: $primary;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+  }
+
+  .cardMeta {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+
+      .tag {
+        font-size: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #cbd5e1;
+        padding: 2px 7px;
+        border-radius: 10px;
+        text-transform: lowercase;
+      }
+    }
+
+    .cardFooter {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 4px;
+
+      .catId {
+        font-size: 10px;
+        font-family: monospace;
+        color: $text-muted;
+      }
+
+      .cardActions {
+        display: flex;
+        gap: 6px;
+
+        button {
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          color: $text-main;
+          padding: 4px 8px;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 12px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.15s ease;
+
+          &:hover {
+            background: rgba(255, 255, 255, 0.15);
+          }
+
+          &.favoriteBtn.active {
+            color: $accent;
+            background: rgba(244, 63, 94, 0.15);
+            border-color: rgba(244, 63, 94, 0.4);
+          }
+        }
+      }
+    }
+  }
+}
+
+/* Tag Selector Component */
+.tagSelector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  .tagLabel {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: $text-muted;
+    letter-spacing: 0.5px;
+  }
+
+  .tagList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    .tagPill {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: $text-muted;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+      }
+
+      &.active {
+        background: $primary;
+        color: #0f172a;
+        font-weight: 600;
+        border-color: $primary;
+      }
+    }
+  }
+}
+
+/* Says Overlay Input Component */
+.saysInputGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  .inputLabel {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: $text-muted;
+    letter-spacing: 0.5px;
+  }
+
+  .inputWrapper {
+    display: flex;
+    gap: 6px;
+
+    input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid $border-card;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #ffffff;
+      outline: none;
+      transition: border-color 0.15s ease;
+
+      &:focus {
+        border-color: $primary;
+      }
+
+      &::placeholder {
+        color: $text-muted;
+      }
+    }
+  }
+
+  .presetChips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+
+    .chip {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: $text-muted;
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+      }
+    }
+  }
+}
+
+/* Action Controls & Stats */
+.controls {
+  display: flex;
+  gap: 8px;
+
+  .fetchBtn {
+    flex: 1;
+    background: #0284c7;
+    border: none;
+    color: #ffffff;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.15s ease;
+
+    &:hover:not(:disabled) {
+      background: #0369a1;
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+}
+
+.statsBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  font-size: 11px;
+  color: $text-muted;
+
+  .stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+
+    strong {
+      color: #ffffff;
+    }
+  }
+}
+
+.rtkBadge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Favorites Drawer Component */
+.favoritesDrawer {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .drawerHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    .drawerTitle {
+      font-size: 11px;
+      font-weight: 700;
+      color: #f43f5e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .clearBtn {
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(244, 63, 94, 0.15);
+        color: #f43f5e;
+      }
+    }
+  }
+
+  .drawerList {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+
+    &::-webkit-scrollbar {
+      height: 4px;
+    }
+    &::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+    }
+  }
+
+  .drawerItem {
+    position: relative;
+    flex-shrink: 0;
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      transform: scale(1.05);
+      border-color: #f43f5e;
+
+      .removeBtn {
+        opacity: 1;
+      }
+    }
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .removeBtn {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.7);
+      color: #ffffff;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s ease, background 0.15s ease;
+
+      &:hover {
+        background: #f43f5e;
+      }
+    }
+  }
+
+  .drawerEmpty {
+    font-size: 11px;
+    color: #64748b;
+    font-style: italic;
+    text-align: center;
+    padding: 6px 0;
+  }
+}
+
+.errorBanner {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  button {
+    background: rgba(239, 68, 68, 0.3);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ffffff;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(239, 68, 68, 0.5);
+    }
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+

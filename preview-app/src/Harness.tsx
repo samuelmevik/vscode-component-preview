@@ -20,6 +20,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
 import { ActionPanel } from './ActionPanel';
 import { subscribeToConsoleLogs } from './consoleInterceptor';
+import { subscribeToNetworkLogs } from './networkInterceptor';
 import { prepareProps } from './propsResolver';
 import './harness.scss';
 
@@ -145,7 +146,12 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   useEffect(() => {
-    return subscribeToConsoleLogs(addActionLog);
+    const unsubConsole = subscribeToConsoleLogs(addActionLog);
+    const unsubNetwork = subscribeToNetworkLogs(addActionLog);
+    return () => {
+      unsubConsole();
+      unsubNetwork();
+    };
   }, [addActionLog]);
 
   const clearActionLogs = useCallback(() => {

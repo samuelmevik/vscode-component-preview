@@ -426,6 +426,10 @@ html, body {
         padding: 1px 6px;
         border-radius: 10px;
 
+        &.network {
+          background-color: #0284c7;
+        }
+
         &.error {
           background-color: $danger-color;
         }
@@ -694,6 +698,136 @@ html, body {
 
             .action-name {
               color: #ff9999;
+            }
+          }
+        }
+
+        &.network {
+          border-color: rgba(#0284c7, 0.3);
+          background: rgba(#0284c7, 0.05);
+
+          &.warn {
+            border-color: rgba(#f59e0b, 0.35);
+            background: rgba(#f59e0b, 0.05);
+          }
+
+          &.error {
+            border-color: rgba($danger-color, 0.35);
+            background: rgba($danger-color, 0.05);
+          }
+
+          .source-tag {
+            background-color: rgba(#0284c7, 0.25);
+            color: #38bdf8;
+            border: 1px solid rgba(#0284c7, 0.4);
+          }
+
+          .method-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-family: 'Consolas', monospace;
+
+            &.method-get {
+              color: #34d399;
+              background: rgba(#10b981, 0.15);
+              border: 1px solid rgba(#10b981, 0.3);
+            }
+
+            &.method-post {
+              color: #fbbf24;
+              background: rgba(#f59e0b, 0.15);
+              border: 1px solid rgba(#f59e0b, 0.3);
+            }
+
+            &.method-put, &.method-patch {
+              color: #60a5fa;
+              background: rgba(#3b82f6, 0.15);
+              border: 1px solid rgba(#3b82f6, 0.3);
+            }
+
+            &.method-delete {
+              color: #f87171;
+              background: rgba(#ef4444, 0.15);
+              border: 1px solid rgba(#ef4444, 0.3);
+            }
+          }
+
+          .network-url {
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            color: #f8fafc;
+            word-break: break-all;
+            margin-right: 6px;
+          }
+
+          .network-status-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 1px 5px;
+            border-radius: 3px;
+
+            &.success {
+              color: #4ade80;
+              background: rgba(#22c55e, 0.15);
+              border: 1px solid rgba(#22c55e, 0.3);
+            }
+
+            &.warn {
+              color: #fbbf24;
+              background: rgba(#f59e0b, 0.15);
+              border: 1px solid rgba(#f59e0b, 0.3);
+            }
+
+            &.error {
+              color: #f87171;
+              background: rgba(#ef4444, 0.15);
+              border: 1px solid rgba(#ef4444, 0.3);
+            }
+          }
+
+          .network-duration {
+            font-size: 10px;
+            color: $text-muted;
+          }
+
+          .network-details {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 6px;
+
+            .network-section {
+              .network-section-title {
+                font-size: 10px;
+                font-weight: 600;
+                text-transform: uppercase;
+                color: $text-muted;
+                display: flex;
+                align-items: center;
+                gap: 5px;
+                margin-bottom: 2px;
+
+                .section-dot {
+                  width: 5px;
+                  height: 5px;
+                  border-radius: 50%;
+                  display: inline-block;
+
+                  &.payload-dot {
+                    background-color: #fbbf24;
+                  }
+
+                  &.response-dot {
+                    background-color: #38bdf8;
+                  }
+                }
+              }
+
+              .response-payload {
+                border-left: 2px solid #0284c7;
+              }
             }
           }
         }

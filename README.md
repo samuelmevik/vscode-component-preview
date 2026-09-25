@@ -16,7 +16,8 @@ A high-performance VS Code extension providing live in-editor previews of React 
 - 🔄 **Multi-Variant Tabs**: Switch between different scenarios (e.g. `Default`, `Admin State`, `Logged Out State`, `Error State`) with a single click.
 - 🛡️ **Ephemeral Mock Redux Store**: Safely renders components relying on `useSelector` and `useDispatch` without crashes, side-effects, or singleton pollution.
 - 🧩 **Provider Wrapper Decorators (`wrapperPath`)**: Wrap components in custom app providers (e.g. ThemeProvider, QueryClientProvider, Router).
-- 🎯 **Console & Action Inspector**: Bottom drawer that records and displays live `console.log`, `info`, `warn`, and `error` outputs, dispatched Redux actions, and invoked callback props with instant text search, filter tabs, copy-to-clipboard, and timestamps.
+- 🌐 **Live HTTP & API Network Inspector**: Automatically intercepts and logs requests made by `axios`, `window.fetch`, and Redux Toolkit `createApi` (RTK Query) with method, URL, status code, duration, request payload, and response data.
+- 🎯 **Console & Action Inspector**: Bottom drawer that records and displays live `console.log`, `info`, `warn`, and `error` outputs, dispatched Redux actions, invoked callback props, and HTTP network requests with instant text search, filter tabs, copy-to-clipboard, and timestamps.
 - 📺 **VS Code Output Channel Streaming**: Automatically streams all in-preview console logs directly into VS Code's `Component Preview` output channel.
 - 🔒 **Component Lock / Pin**: Freeze and keep the current preview active with a single click, allowing you to browse or edit other files across your codebase without losing your component view.
 - 🛑 **Full Server Lifecycle Control**: Turn off or restart the background Vite server anytime via the editor title bar, status bar, command palette, or in-preview header.
