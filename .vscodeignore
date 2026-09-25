@@ -1,0 +1,20 @@
+.vscode/**
+src/**
+sample-workspace/**
+test/**
+tsconfig.json
+esbuild.config.js
+*.log
+.gitignore
+.git/**
+
+# Ignore unnecessary files in node_modules
+**/*.map
+node_modules/**/test/**
+node_modules/**/tests/**
+node_modules/**/docs/**
+node_modules/**/README*
+node_modules/**/CHANGELOG*
+node_modules/**/History*
+node_modules/**/*.ts
+node_modules/**/*.d.ts

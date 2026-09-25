@@ -1,0 +1,107 @@
+$card-bg: #2a2d34;
+$card-border: #3b3f4a;
+$badge-bg: #10b981;
+$badge-admin: #8b5cf6;
+
+.card {
+  background-color: $card-bg;
+  border: 1px solid $card-border;
+  border-radius: 12px;
+  padding: 24px;
+  width: 320px;
+  color: #f3f4f6;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  font-family: inherit;
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      color: #ffffff;
+    }
+
+    .info {
+      display: flex;
+      flex-direction: column;
+
+      .name {
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .email {
+        font-size: 12px;
+        color: #9ca3af;
+      }
+    }
+  }
+
+  .statusRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    font-size: 13px;
+
+    .roleBadge {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background-color: $badge-bg;
+      color: #ffffff;
+
+      &.admin {
+        background-color: $badge-admin;
+      }
+    }
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+
+    button {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 1px solid #4b5563;
+      background: transparent;
+      color: #e5e7eb;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      &.primary {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: #ffffff;
+
+        &:hover {
+          background: #2563eb;
+        }
+      }
+    }
+  }
+}
