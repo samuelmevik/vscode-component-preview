@@ -18,6 +18,9 @@ import {
   Layers,
   Hand,
   Maximize,
+  AlertTriangle,
+  X,
+  ExternalLink,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
@@ -25,6 +28,12 @@ import { ActionPanel } from './ActionPanel';
 import { subscribeToConsoleLogs } from './consoleInterceptor';
 import { subscribeToNetworkLogs } from './networkInterceptor';
 import { prepareProps } from './propsResolver';
+import {
+  subscribeToRuntimeErrors,
+  setActiveSourceFile,
+  RuntimeErrorItem,
+} from './errorInterceptor';
+import { navigateToSource } from './errorLocationParser';
 import './harness.scss';
 
 export interface PreviewVariantData {
@@ -47,6 +56,9 @@ interface HarnessProps {
   initialVariants: PreviewVariantData[];
   initialAllComponents?: string[];
   initialIsLocked?: boolean;
+  currentFilePath?: string;
+  componentStartLine?: number;
+  commentStartLine?: number;
 }
 
 type ViewportMode = 'responsive' | 'mobile' | 'tablet' | 'desktop';
@@ -69,8 +81,15 @@ export const Harness: React.FC<HarnessProps> = ({
   initialVariants,
   initialAllComponents = [],
   initialIsLocked = false,
+  currentFilePath: initialFilePath,
+  componentStartLine: initialComponentStartLine,
+  commentStartLine: initialCommentStartLine,
 }) => {
   const [componentName, setComponentName] = useState(initialComponentName);
+  const [currentFilePath, setCurrentFilePath] = useState<string | undefined>(initialFilePath);
+  const [componentStartLine, setComponentStartLine] = useState<number | undefined>(initialComponentStartLine);
+  const [commentStartLine, setCommentStartLine] = useState<number | undefined>(initialCommentStartLine);
+  const [runtimeErrors, setRuntimeErrors] = useState<RuntimeErrorItem[]>([]);
   const [variants, setVariants] = useState<PreviewVariantData[]>(initialVariants);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
   const [actionLogs, setActionLogs] = useState<ActionLogItem[]>([]);
@@ -79,6 +98,10 @@ export const Harness: React.FC<HarnessProps> = ({
   const [viewportMode, setViewportMode] = useState<ViewportMode>('responsive');
   const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>('dark');
   const [remountCount, setRemountCount] = useState<number>(0);
+
+  useEffect(() => {
+    setActiveSourceFile(currentFilePath);
+  }, [currentFilePath]);
   // Camera navigation & zoom state (persists across component swaps & file switches)
   const [camera, setCamera] = useState<{ zoom: number; pan: { x: number; y: number } }>(() => {
     try {
@@ -132,8 +155,21 @@ export const Harness: React.FC<HarnessProps> = ({
       }
 
       if (message.type === 'SYNC_PREVIEW') {
+        // Reset error state and remount so any newly previewed component or updated code renders fresh
+        setRemountCount((prev) => prev + 1);
+        setRuntimeErrors([]);
+
         if (message.payload.isLocked !== undefined) {
           setIsLocked(!!message.payload.isLocked);
+        }
+        if (message.payload.currentFilePath) {
+          setCurrentFilePath(message.payload.currentFilePath);
+        }
+        if (message.payload.componentStartLine !== undefined) {
+          setComponentStartLine(message.payload.componentStartLine);
+        }
+        if (message.payload.commentStartLine !== undefined) {
+          setCommentStartLine(message.payload.commentStartLine);
         }
         if (message.payload.componentName) {
           setComponentName(message.payload.componentName);
@@ -151,11 +187,28 @@ export const Harness: React.FC<HarnessProps> = ({
 
       if (message.type === 'RESET_COMPONENT_STATE') {
         setRemountCount((prev) => prev + 1);
+        setRuntimeErrors([]);
       }
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+
+    // Listen for Vite HMR updates to clear error states when code is saved
+    const hot = (import.meta as any).hot;
+    let handleBeforeUpdate: (() => void) | undefined;
+    if (hot && typeof hot.on === 'function') {
+      handleBeforeUpdate = () => {
+        setRemountCount((prev) => prev + 1);
+      };
+      hot.on('vite:beforeUpdate', handleBeforeUpdate);
+    }
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      if (hot && handleBeforeUpdate && typeof hot.off === 'function') {
+        hot.off('vite:beforeUpdate', handleBeforeUpdate);
+      }
+    };
   }, []);
 
   const handleToggleLock = useCallback(() => {
@@ -191,12 +244,39 @@ export const Harness: React.FC<HarnessProps> = ({
     setActionLogs((prev) => [item, ...prev.slice(0, 49)]); // keep last 50 actions
   }, []);
 
+  const dismissRuntimeError = useCallback((id: string) => {
+    setRuntimeErrors((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+
   useEffect(() => {
     const unsubConsole = subscribeToConsoleLogs(addActionLog);
     const unsubNetwork = subscribeToNetworkLogs(addActionLog);
+    const unsubErrors = subscribeToRuntimeErrors((item) => {
+      setRuntimeErrors((prev) => [item, ...prev.slice(0, 4)]);
+      addActionLog({
+        id: item.id,
+        source: 'error',
+        level: 'error',
+        name: item.location?.functionName
+          ? `Exception in ${item.location.functionName}()`
+          : item.source === 'render'
+          ? 'Component Render Error'
+          : 'Runtime Exception',
+        payload: {
+          __isError: true,
+          message: item.message,
+          stack: item.stack,
+          source: item.source,
+        },
+        timestamp: item.timestamp,
+        location: item.location,
+      });
+    });
+
     return () => {
       unsubConsole();
       unsubNetwork();
+      unsubErrors();
     };
   }, [addActionLog]);
 
@@ -773,13 +853,37 @@ export const Harness: React.FC<HarnessProps> = ({
         onDoubleClick={handleDoubleClick}
         onAuxClick={handleAuxClick}
       >
-        <ErrorBoundary key={remountCount} fallbackKey={`${componentName}-${activeVariantIndex}-${remountCount}`}>
+        <ErrorBoundary
+          key={remountCount}
+          fallbackKey={`${componentName}-${activeVariantIndex}-${remountCount}`}
+          currentFilePath={currentFilePath}
+          componentName={componentName}
+          componentStartLine={componentStartLine}
+          onReset={() => setRemountCount((prev) => prev + 1)}
+        >
           {activeVariant.parseError ? (
             <div className="preview-error-card">
               <div className="preview-error-header">
                 <h3>Comment YAML Parsing Error</h3>
               </div>
               <p className="preview-error-message">{activeVariant.parseError}</p>
+              {currentFilePath && (
+                <button
+                  className="preview-jump-btn"
+                  onClick={() =>
+                    navigateToSource({
+                      filePath: currentFilePath,
+                      line: commentStartLine || componentStartLine || 1,
+                    })
+                  }
+                  title={`Open comment in ${currentFilePath}`}
+                >
+                  <ExternalLink size={13} />
+                  <span>
+                    Open Comment in Editor ({currentFilePath.split(/[/\\]/).pop()}:{commentStartLine || 1})
+                  </span>
+                </button>
+              )}
             </div>
           ) : (() => {
             const activeStorePath = activeVariant.storePath;
@@ -797,6 +901,23 @@ export const Harness: React.FC<HarnessProps> = ({
                     <h3>Redux Store Resolution Error</h3>
                   </div>
                   <p className="preview-error-message">{activeStoreError}</p>
+                  {currentFilePath && (
+                    <button
+                      className="preview-jump-btn"
+                      onClick={() =>
+                        navigateToSource({
+                          filePath: currentFilePath,
+                          line: componentStartLine || 1,
+                        })
+                      }
+                      title={`Open variant definition in ${currentFilePath}`}
+                    >
+                      <ExternalLink size={13} />
+                      <span>
+                        Open Component in Editor ({currentFilePath.split(/[/\\]/).pop()}:{componentStartLine || 1})
+                      </span>
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -875,6 +996,46 @@ export const Harness: React.FC<HarnessProps> = ({
           </div>
         )}
       </main>
+
+      {/* Floating Runtime Error Toasts (for event handler & async throws) */}
+      {runtimeErrors.length > 0 && (
+        <div className="preview-error-toasts-container">
+          {runtimeErrors.map((err) => (
+            <div key={err.id} className="preview-error-toast">
+              <div className="toast-main">
+                <AlertTriangle size={15} className="toast-icon" />
+                <div className="toast-body">
+                  <div className="toast-title">
+                    {err.location?.functionName
+                      ? `Error in ${err.location.functionName}()`
+                      : 'Runtime Exception'}
+                  </div>
+                  <div className="toast-message">{err.message}</div>
+                </div>
+              </div>
+              <div className="toast-actions">
+                {err.location && (
+                  <button
+                    className="toast-jump-btn"
+                    onClick={() => navigateToSource(err.location!)}
+                    title={`Open ${err.location.filePath}:${err.location.line} in VS Code`}
+                  >
+                    <ExternalLink size={12} />
+                    <span>{err.location.fileName}:{err.location.line}</span>
+                  </button>
+                )}
+                <button
+                  className="toast-dismiss-btn"
+                  onClick={() => dismissRuntimeError(err.id)}
+                  title="Dismiss error notification"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Action / Event Inspector Drawer */}
       <ActionPanel logs={actionLogs} onClear={clearActionLogs} />

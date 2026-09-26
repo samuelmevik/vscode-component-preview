@@ -1,5 +1,6 @@
 import React from 'react';
 import { ActionLogItem } from './MockReduxProvider';
+import { reportRuntimeError } from './errorInterceptor';
 
 const IS_FUNCTION_REGEX = /^(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>|^(?:async\s+)?function\s*\(/;
 const IS_HTML_REGEX = /<[a-z][\s\S]*>/i;
@@ -104,7 +105,16 @@ export function prepareProps(
         } else {
           props[key] = (...args: any[]) => {
             logCallback(key, args, onActionLog, ` -> ${trimmed}()`);
-            return fileExport(...args);
+            try {
+              const result = fileExport(...args);
+              if (result && typeof result.then === 'function') {
+                result.catch((err: any) => reportRuntimeError(err, 'promise'));
+              }
+              return result;
+            } catch (err) {
+              reportRuntimeError(err, 'callback');
+              throw err;
+            }
           };
         }
       } else {
@@ -121,7 +131,16 @@ export function prepareProps(
         if (typeof parsedFn === 'function') {
           props[key] = (...args: any[]) => {
             logCallback(key, args, onActionLog);
-            return parsedFn(...args);
+            try {
+              const result = parsedFn(...args);
+              if (result && typeof result.then === 'function') {
+                result.catch((err: any) => reportRuntimeError(err, 'promise'));
+              }
+              return result;
+            } catch (err) {
+              reportRuntimeError(err, 'callback');
+              throw err;
+            }
           };
         }
       } catch (e) {

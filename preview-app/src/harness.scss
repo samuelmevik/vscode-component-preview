@@ -582,6 +582,16 @@ html, body {
           color: #ffffff;
           font-weight: 500;
         }
+
+        &.has-errors {
+          color: #ff8888;
+          border-color: rgba($danger-color, 0.4);
+
+          &.active {
+            background: rgba($danger-color, 0.25);
+            color: #ffffff;
+          }
+        }
       }
     }
 
@@ -703,6 +713,28 @@ html, body {
             font-family: 'Consolas', 'Courier New', monospace;
             font-weight: 600;
             color: #ffffff;
+          }
+
+          .action-jump-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba($accent-color, 0.15);
+            border: 1px solid rgba($accent-color, 0.35);
+            color: #58a6ff;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-family: 'Consolas', monospace;
+            cursor: pointer;
+            transition: all 0.15s ease;
+
+            &:hover {
+              background: rgba($accent-color, 0.3);
+              border-color: $accent-color;
+              color: #ffffff;
+              transform: translateY(-1px);
+            }
           }
 
           .action-header-right {
@@ -936,32 +968,193 @@ html, body {
   }
 }
 
-/* Error Card */
+/* Error Card (Render & Config Errors) */
 .preview-error-card {
-  background: rgba($danger-color, 0.1);
+  background: rgba(241, 76, 76, 0.08);
   border: 1px solid rgba($danger-color, 0.4);
   border-radius: 8px;
-  padding: 20px;
-  max-width: 600px;
+  padding: 24px;
+  max-width: 650px;
   color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
 
   .preview-error-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 10px;
+    margin-bottom: 12px;
     color: $danger-color;
 
     h3 {
       font-size: 16px;
       font-weight: 600;
+      margin: 0;
+    }
+
+    .preview-error-badge {
+      font-size: 11px;
+      font-family: 'Consolas', monospace;
+      background: rgba($danger-color, 0.2);
+      border: 1px solid rgba($danger-color, 0.35);
+      color: #ff9999;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: auto;
     }
   }
 
   .preview-error-message {
     font-size: 13px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+    color: #e0e0e0;
+    background: rgba(0, 0, 0, 0.25);
+    padding: 10px 14px;
+    border-radius: 4px;
+    border-left: 3px solid $danger-color;
+  }
+
+  .preview-error-primary-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .preview-jump-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #0e639c;
+    color: #ffffff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(14, 99, 156, 0.4);
+    transition: all 0.15s ease;
+
+    &:hover {
+      background: #1177bb;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(14, 99, 156, 0.6);
+    }
+
+    &.secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #e0e0e0;
+      box-shadow: none;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.16);
+        color: #ffffff;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+    }
+  }
+
+  .preview-error-frames {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 16px;
+
+    .frames-heading {
+      font-size: 11px;
+      font-weight: 600;
+      color: $text-muted;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .frames-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .frame-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-family: 'Consolas', monospace;
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.03);
+
+      .frame-fn {
+        color: #ff9999;
+        font-weight: 600;
+      }
+
+      .frame-file {
+        color: $text-muted;
+        font-size: 11px;
+      }
+
+      .frame-jump-link {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba($accent-color, 0.15);
+        border: 1px solid rgba($accent-color, 0.35);
+        color: #58a6ff;
+        padding: 2px 7px;
+        border-radius: 3px;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+
+        &:hover {
+          background: rgba($accent-color, 0.35);
+          color: #ffffff;
+        }
+      }
+    }
+  }
+
+  .preview-error-details-toggle {
     margin-bottom: 12px;
-    line-height: 1.4;
+
+    .toggle-stack-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: none;
+      color: $text-muted;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+
+      &:hover {
+        color: #ffffff;
+      }
+    }
+  }
+
+  .preview-error-stack-wrapper {
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    .stack-block {
+      .stack-block-title {
+        font-size: 11px;
+        color: $text-muted;
+        margin-bottom: 4px;
+      }
+    }
   }
 
   .preview-error-stack {
@@ -972,24 +1165,166 @@ html, body {
     border-radius: 4px;
     color: #ff8888;
     overflow-x: auto;
-    margin-bottom: 14px;
+    margin: 0;
     max-height: 180px;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 
-  .preview-retry-btn {
-    display: inline-flex;
+  .preview-error-actions {
+    display: flex;
     align-items: center;
-    gap: 6px;
-    background: $danger-color;
-    color: #ffffff;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    cursor: pointer;
+    gap: 8px;
 
-    &:hover {
-      opacity: 0.9;
+    .preview-retry-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba($danger-color, 0.85);
+      color: #ffffff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+
+      &:hover {
+        background: $danger-color;
+      }
+    }
+
+    .preview-reset-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.18);
+      }
     }
   }
 }
+
+/* Floating Runtime Error Toasts (Event Handler & Async Exceptions) */
+.preview-error-toasts-container {
+  position: absolute;
+  top: 56px;
+  right: 18px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 480px;
+  pointer-events: none;
+}
+
+.preview-error-toast {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #221518;
+  border: 1px solid rgba($danger-color, 0.5);
+  border-left: 4px solid $danger-color;
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: slideInToast 0.25s ease-out;
+
+  .toast-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+
+    .toast-icon {
+      color: $danger-color;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .toast-body {
+      flex: 1;
+      min-width: 0;
+
+      .toast-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #ff9999;
+        font-family: 'Consolas', monospace;
+        margin-bottom: 2px;
+      }
+
+      .toast-message {
+        font-size: 11px;
+        color: #cccccc;
+        line-height: 1.4;
+        word-break: break-word;
+      }
+    }
+  }
+
+  .toast-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+
+    .toast-jump-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #0e639c;
+      color: #ffffff;
+      border: none;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-family: 'Consolas', monospace;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+
+      &:hover {
+        background: #1177bb;
+      }
+    }
+
+    .toast-dismiss-btn {
+      background: transparent;
+      border: none;
+      color: $text-muted;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      padding: 2px;
+      border-radius: 3px;
+
+      &:hover {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.1);
+      }
+    }
+  }
+}
+
+@keyframes slideInToast {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+

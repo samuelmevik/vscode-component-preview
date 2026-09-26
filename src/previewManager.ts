@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { PreviewViteServer } from './server/viteServer';
 import { scanComponents, ScannedComponent } from './parser/astScanner';
 import { getWebviewContent, getServerStoppedHtml } from './webviewHtml';
@@ -16,6 +17,9 @@ export class PreviewManager {
   private lockedFilePath: string | null = null;
   private lockedComponentName: string | null = null;
   private statusBarItem: vscode.StatusBarItem;
+  private isNavigatingToSource: boolean = false;
+  private lastNavigateTime: number = 0;
+  private lastNavigateTarget: string = '';
 
   constructor(context: vscode.ExtensionContext) {
     this.extensionContext = context;
@@ -36,6 +40,23 @@ export class PreviewManager {
 
     this.viteServer.onStopRequested = () => {
       this.stopServer();
+    };
+
+    this.viteServer.onNavigateRequested = (filePath, line, column) => {
+      this.navigateToSource(filePath, line, column);
+    };
+
+    this.viteServer.onRuntimeError = (err) => {
+      const locStr = err.location ? ` at ${err.location.fileName}:${err.location.line}:${err.location.column}` : '';
+      this.outputChannel.appendLine(`[Runtime Error ${err.timestamp || ''}] [${(err.source || 'error').toUpperCase()}] ${err.message}${locStr}`);
+      if (err.stack) {
+        this.outputChannel.appendLine(err.stack);
+      }
+    };
+
+    this.viteServer.onConsoleLog = (log) => {
+      const levelTag = log.level ? `[${log.level.toUpperCase()}]` : '[LOG]';
+      this.outputChannel.appendLine(`[Console ${log.timestamp || ''}] ${levelTag} ${log.text}`);
     };
 
     vscode.workspace.onDidChangeConfiguration(
@@ -221,6 +242,13 @@ export class PreviewManager {
           const { level, text, timestamp } = message.payload || {};
           const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
           this.outputChannel.appendLine(`[Console ${timestamp || ''}] ${levelTag} ${text}`);
+        } else if (message.type === 'RUNTIME_ERROR') {
+          const { message: errMsg, source, location, stack, timestamp } = message.payload || {};
+          const locStr = location ? ` at ${location.fileName}:${location.line}:${location.column}` : '';
+          this.outputChannel.appendLine(`[Runtime Error ${timestamp || ''}] [${(source || 'error').toUpperCase()}] ${errMsg}${locStr}`);
+          if (stack) {
+            this.outputChannel.appendLine(stack);
+          }
         } else if (message.type === 'SWITCH_COMPONENT') {
           const targetName = message.payload?.componentName;
           const editor = vscode.window.activeTextEditor;
@@ -231,6 +259,11 @@ export class PreviewManager {
               const allComponentNames = scanResult.components.map((c) => c.name);
               await this.renderTargetComponent(editor.document, target, false, allComponentNames);
             }
+          }
+        } else if (message.type === 'NAVIGATE_TO_SOURCE') {
+          const { filePath, line, column } = message.payload || {};
+          if (filePath) {
+            await this.navigateToSource(filePath, line, column);
           }
         }
       }, null, this.disposables);
@@ -247,7 +280,10 @@ export class PreviewManager {
         await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn ?? vscode.ViewColumn.One, false);
       }
     } else {
-      this.panel.reveal(vscode.ViewColumn.Beside, true);
+      this.panel.reveal(this.panel.viewColumn || vscode.ViewColumn.Beside, true);
+      if (this.isLocked && this.lockedFilePath && this.lockedFilePath !== document.fileName) {
+        this.toggleLock(false);
+      }
     }
 
     await this.updatePreviewForEditor(targetEditor, true);
@@ -338,6 +374,8 @@ export class PreviewManager {
     this.viteServer.updateState({
       currentFile: document.fileName,
       currentComponentName: target.name,
+      componentStartLine: target.startLine,
+      commentStartLine: target.commentStartLine,
       meta: target.meta,
       allComponents,
       isLocked: this.isLocked,
@@ -350,12 +388,16 @@ export class PreviewManager {
       if (reloadWebview || fileChanged || compChanged) {
         const rawPreviewUrl = this.viteServer.getPreviewUrl();
         const externalUri = await vscode.env.asExternalUri(vscode.Uri.parse(rawPreviewUrl));
-        this.panel.webview.html = getWebviewContent(externalUri.toString(), target.name);
+        const cacheBustedUrl = `${externalUri.toString()}?t=${Date.now()}`;
+        this.panel.webview.html = getWebviewContent(cacheBustedUrl, target.name);
       } else {
         this.panel.webview.postMessage({
           type: 'SYNC_PREVIEW',
           payload: {
+            currentFilePath: document.fileName,
             componentName: target.name,
+            componentStartLine: target.startLine,
+            commentStartLine: target.commentStartLine,
             variants: target.meta.variants,
             allComponents,
             isLocked: this.isLocked,
@@ -377,7 +419,33 @@ export class PreviewManager {
     if (!scanResult.targetComponent) {
       this.outputChannel.appendLine(`[Preview] No React component found in ${document.fileName}`);
       if (this.panel) {
-        this.panel.webview.html = '<!DOCTYPE html><html><body style="background:#1e1e1e;color:#888;font-family:sans-serif;padding:24px;text-align:center;">No React component detected in this file.</body></html>';
+        const fileName = path.basename(document.fileName);
+        const escapedPath = JSON.stringify(document.fileName.replace(/\\/g, '/'));
+        this.panel.webview.html = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { background: #1e1e1e; color: #cccccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; box-sizing: border-box; padding: 24px; text-align: center; }
+    .card { background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 28px 32px; max-width: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+    h3 { margin: 0 0 10px 0; color: #f14c4c; font-size: 15px; }
+    p { margin: 0 0 20px 0; font-size: 13px; color: #999; line-height: 1.5; }
+    button { background: #0e639c; color: white; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s ease; }
+    button:hover { background: #1177bb; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3>No React Component Detected</h3>
+    <p>Could not detect an exported React component in <strong>${fileName}</strong>. Check for syntax errors or export statements.</p>
+    <button onclick="vscode.postMessage({ type: 'NAVIGATE_TO_SOURCE', payload: { filePath: ${escapedPath}, line: 1 } })">
+      Open ${fileName} in Editor
+    </button>
+  </div>
+  <script>
+    const vscode = acquireVsCodeApi();
+  </script>
+</body>
+</html>`;
       }
       return;
     }
@@ -387,7 +455,7 @@ export class PreviewManager {
   }
 
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined) {
-    if (this.isLocked || !editor || !this.panel) {
+    if (this.isLocked || this.isNavigatingToSource || !editor || !this.panel) {
       return;
     }
     this.updatePreviewForEditor(editor, true);
@@ -451,6 +519,155 @@ export class PreviewManager {
           await this.renderTargetComponent(document, scanResult.targetComponent, false, allComponentNames);
         }
       }
+    }
+  }
+
+  /**
+   * Resolves a source file path from various formats (Vite /@fs/, URL encodings, Windows drive
+   * prefixes, workspace-relative or current-file-relative paths) to an absolute path on disk.
+   */
+  public resolveSourcePath(rawFilePath: string): string | null {
+    if (!rawFilePath) return this.currentFilePath;
+
+    let p = rawFilePath.trim();
+    // Strip query string (?t=...) and hash (#...)
+    p = p.split('?')[0].split('#')[0];
+    try {
+      p = decodeURIComponent(p);
+    } catch {}
+
+    // Strip Vite prefixes: /@fs/, http://..., https://..., vscode-webview://...
+    p = p.replace(/^https?:\/\/[^/]+\/@fs\//i, '');
+    p = p.replace(/^\/@fs\//i, '');
+    p = p.replace(/^https?:\/\/[^/]+\//i, '');
+    p = p.replace(/^[a-z\-]+:\/\/[^/]+\//i, '');
+
+    // Normalize slashes before Windows drive letter: /C:/ -> C:/ or ///C:/ -> C:/
+    p = p.replace(/^[/\\]+([a-zA-Z]:[/\\])/, '$1');
+    p = p.replace(/^([a-zA-Z]):/, (_, drive) => `${drive.toUpperCase()}:`);
+
+    // If it's a direct absolute or existing file that exists on disk
+    if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+      return path.resolve(p);
+    }
+
+    // Try stripping leading slashes for relative resolution
+    const cleanRel = p.replace(/^[/\\]+/, '');
+
+    // Check relative to currentFilePath directory if available
+    if (this.currentFilePath) {
+      const currentDir = path.dirname(this.currentFilePath);
+      const relToCurrent = path.resolve(currentDir, cleanRel);
+      if (fs.existsSync(relToCurrent) && fs.statSync(relToCurrent).isFile()) {
+        return relToCurrent;
+      }
+    }
+
+    // Check relative to all workspace folders
+    const workspaceFolders = vscode.workspace.workspaceFolders || [];
+    for (const folder of workspaceFolders) {
+      const folderPath = folder.uri.fsPath;
+      const candidate1 = path.resolve(folderPath, cleanRel);
+      if (fs.existsSync(candidate1) && fs.statSync(candidate1).isFile()) {
+        return candidate1;
+      }
+      const candidate2 = path.resolve(folderPath, p);
+      if (fs.existsSync(candidate2) && fs.statSync(candidate2).isFile()) {
+        return candidate2;
+      }
+    }
+
+    // Check if filename matches currentFilePath basename
+    if (this.currentFilePath && path.basename(this.currentFilePath) === path.basename(p)) {
+      return this.currentFilePath;
+    }
+
+    return null;
+  }
+
+  /**
+   * Navigates to a specific file, line, and column in the active VS Code window,
+   * placing the cursor directly on the throwing function or component.
+   */
+  public async navigateToSource(filePath: string, line: number = 1, column: number = 1): Promise<void> {
+    const now = Date.now();
+    const navKey = `${filePath}:${line}:${column}`;
+    if (navKey === this.lastNavigateTarget && now - this.lastNavigateTime < 300) {
+      return; // Deduplicate rapid simultaneous calls from postMessage + fetch
+    }
+    this.lastNavigateTime = now;
+    this.lastNavigateTarget = navKey;
+
+    try {
+      let targetPath = this.resolveSourcePath(filePath);
+
+      if (!targetPath) {
+        // Fallback: search workspace for matching filename
+        const cleanName = path.basename(filePath.replace(/^[/\\]+/, '').split('?')[0].split('#')[0]);
+        if (cleanName) {
+          const found = await vscode.workspace.findFiles(`**/${cleanName}`, '**/node_modules/**', 1);
+          if (found.length > 0) {
+            targetPath = found[0].fsPath;
+          }
+        }
+      }
+
+      // Ultimate fallback: open current component file
+      if (!targetPath && this.currentFilePath && fs.existsSync(this.currentFilePath)) {
+        targetPath = this.currentFilePath;
+      }
+
+      if (!targetPath) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+
+      this.isNavigatingToSource = true;
+
+      const uri = vscode.Uri.file(targetPath);
+      const doc = await vscode.workspace.openTextDocument(uri);
+
+      const targetLine = Math.max((line || this.currentComponent?.startLine || 1) - 1, 0);
+      const targetCol = Math.max((column || 1) - 1, 0);
+      const pos = new vscode.Position(targetLine, targetCol);
+      const selection = new vscode.Range(pos, pos);
+
+      // Determine the best view column:
+      // 1. If this document is already open in any visible text editor, reuse its column
+      let targetColumn: vscode.ViewColumn = vscode.ViewColumn.One;
+      const existingEditor = vscode.window.visibleTextEditors.find(
+        (ed) => ed.document.uri.fsPath === doc.uri.fsPath
+      );
+
+      if (existingEditor && existingEditor.viewColumn) {
+        targetColumn = existingEditor.viewColumn;
+      } else if (this.panel && this.panel.viewColumn === vscode.ViewColumn.One) {
+        targetColumn = vscode.ViewColumn.Beside;
+      } else {
+        const activeCol = vscode.window.activeTextEditor?.viewColumn;
+        if (activeCol && activeCol !== this.panel?.viewColumn) {
+          targetColumn = activeCol;
+        } else {
+          targetColumn = vscode.ViewColumn.One;
+        }
+      }
+
+      const editor = await vscode.window.showTextDocument(doc, {
+        viewColumn: targetColumn,
+        selection,
+        preserveFocus: false,
+      });
+
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(selection, vscode.TextEditorRevealType.InCenter);
+      this.outputChannel.appendLine(`[Preview] Navigated to source at ${targetPath}:${targetLine + 1}:${targetCol + 1}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[Preview Error] Failed to navigate to source ${filePath}:${line} - ${msg}`);
+      vscode.window.showWarningMessage(`Could not open source file: ${filePath}`);
+    } finally {
+      setTimeout(() => {
+        this.isNavigatingToSource = false;
+      }, 500);
     }
   }
 

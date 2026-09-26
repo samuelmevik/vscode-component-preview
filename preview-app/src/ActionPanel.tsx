@@ -13,20 +13,25 @@ import {
   Copy,
   Check,
   Globe,
+  ExternalLink,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
+import { navigateToSource } from './errorLocationParser';
 
 interface ActionPanelProps {
   logs: ActionLogItem[];
   onClear: () => void;
 }
 
-type FilterType = 'all' | 'network' | 'redux' | 'console' | 'callback';
+type FilterType = 'all' | 'errors' | 'network' | 'redux' | 'console' | 'callback';
 
 const LogSourceBadge: React.FC<{
   source: ActionLogItem['source'];
   level?: ActionLogItem['level'];
 }> = ({ source, level }) => {
+  if (source === 'error' || level === 'error') {
+    return <><AlertCircle size={11} /> ERROR</>;
+  }
   if (source === 'network') {
     return <><Globe size={11} /> HTTP</>;
   }
@@ -37,8 +42,6 @@ const LogSourceBadge: React.FC<{
     return <><Zap size={11} /> CALLBACK</>;
   }
   switch (level) {
-    case 'error':
-      return <><AlertCircle size={11} /> ERROR</>;
     case 'warn':
       return <><AlertTriangle size={11} /> WARN</>;
     case 'info':
@@ -56,7 +59,9 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
 
   const filteredLogs = useMemo(() => {
     let result = logs;
-    if (filter !== 'all') {
+    if (filter === 'errors') {
+      result = result.filter((log) => log.source === 'error' || log.level === 'error');
+    } else if (filter !== 'all') {
       result = result.filter((log) => log.source === filter);
     }
     if (searchQuery.trim()) {
@@ -66,6 +71,8 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
         if (log.url && log.url.toLowerCase().includes(q)) return true;
         if (log.method && log.method.toLowerCase().includes(q)) return true;
         if (log.status && String(log.status).includes(q)) return true;
+        if (log.location?.fileName?.toLowerCase().includes(q)) return true;
+        if (log.location?.functionName?.toLowerCase().includes(q)) return true;
         if (log.payload !== undefined) {
           const payloadStr =
             typeof log.payload === 'object' ? JSON.stringify(log.payload) : String(log.payload);
@@ -95,8 +102,9 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
       else if (log.source === 'redux') reduxCount++;
       else if (log.source === 'callback') callbackCount++;
       else if (log.source === 'network') networkCount++;
+      else if (log.source === 'error') errorCount++;
 
-      if (log.level === 'error') errorCount++;
+      if (log.level === 'error' && log.source !== 'error') errorCount++;
       else if (log.level === 'warn') warnCount++;
     }
 
@@ -144,10 +152,12 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
         <>
           <div className="action-panel-toolbar">
             <div className="filter-tabs">
-              {(['all', 'network', 'redux', 'console', 'callback'] as const).map((type) => {
+              {(['all', 'errors', 'network', 'redux', 'console', 'callback'] as const).map((type) => {
                 const count =
                   type === 'all'
                     ? logs.length
+                    : type === 'errors'
+                    ? errorCount
                     : type === 'network'
                     ? networkCount
                     : type === 'console'
@@ -158,11 +168,14 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                 const label =
                   type === 'network'
                     ? 'HTTP'
+                    : type === 'errors'
+                    ? 'Errors'
                     : type.charAt(0).toUpperCase() + type.slice(1);
+                const hasErrors = type === 'errors' && errorCount > 0;
                 return (
                   <button
                     key={type}
-                    className={`filter-tab ${filter === type ? 'active' : ''}`}
+                    className={`filter-tab ${filter === type ? 'active' : ''} ${hasErrors ? 'has-errors' : ''}`}
                     onClick={() => setFilter(type)}
                   >
                     {label} ({count})
@@ -289,6 +302,19 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                           <LogSourceBadge source={log.source} level={log.level} />
                         </span>
                         <span className="action-name">{log.name}</span>
+                        {log.location && (
+                          <button
+                            className="action-jump-pill"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigateToSource(log.location!);
+                            }}
+                            title={`Open ${log.location.filePath}:${log.location.line} in VS Code`}
+                          >
+                            <ExternalLink size={10} />
+                            <span>{log.location.fileName}:{log.location.line}</span>
+                          </button>
+                        )}
                         <div className="action-header-right">
                           <button
                             className="copy-log-btn"
@@ -296,7 +322,9 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                             onClick={() => {
                               const textToCopy =
                                 typeof log.payload === 'object'
-                                  ? JSON.stringify(log.payload, null, 2)
+                                  ? (log.payload.__isError || log.payload.stack
+                                      ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
+                                      : JSON.stringify(log.payload, null, 2))
                                   : String(log.payload ?? log.name);
                               navigator.clipboard?.writeText(textToCopy);
                               setCopiedId(log.id);
@@ -311,7 +339,9 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                       {log.payload !== undefined && (
                         <pre className="action-payload">
                           {typeof log.payload === 'object'
-                            ? JSON.stringify(log.payload, null, 2)
+                            ? (log.payload.__isError || log.payload.stack
+                                ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
+                                : JSON.stringify(log.payload, null, 2))
                             : String(log.payload)}
                         </pre>
                       )}

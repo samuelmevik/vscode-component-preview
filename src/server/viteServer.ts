@@ -6,12 +6,32 @@ import react from '@vitejs/plugin-react';
 import { ComponentPreviewMeta } from '../parser/commentParser';
 import { getWorkspaceAliases } from './workspaceAliases';
 
+export interface RuntimeErrorPayload {
+  message: string;
+  source?: string;
+  location?: {
+    filePath: string;
+    fileName: string;
+    functionName?: string;
+    line: number;
+    column: number;
+  };
+  stack?: string;
+  timestamp?: string;
+}
+
 export interface PreviewServerState {
   currentFile: string;
   currentComponentName: string;
+  componentStartLine?: number;
+  commentStartLine?: number;
   meta: ComponentPreviewMeta;
   allComponents?: string[];
   isLocked?: boolean;
+}
+
+export function normalizeDriveLetter(p: string): string {
+  return p.replace(/^([a-zA-Z]):/, (_, drive) => `${drive.toUpperCase()}:`);
 }
 
 const STORE_CANDIDATE_EXTENSIONS = [
@@ -61,9 +81,9 @@ function generateVirtualEntry(
     `;
   }
 
-  const normalizedFilePath = state.currentFile.replace(/\\/g, '/');
+  const normalizedFilePath = normalizeDriveLetter(state.currentFile.replace(/\\/g, '/'));
   const fileImportUrl = `/@fs/${normalizedFilePath}`;
-  const harnessImportUrl = `/@fs/${harnessEntryPath}`;
+  const harnessImportUrl = `/@fs/${normalizeDriveLetter(harnessEntryPath)}`;
   const compName = state.currentComponentName;
   const variantsJson = JSON.stringify(state.meta.variants);
   const isLocked = state.isLocked ? 'true' : 'false';
@@ -186,15 +206,55 @@ function generateVirtualEntry(
       if (!window.__preview_root__) {
         window.__preview_root__ = ReactDOM.createRoot(rootElement);
       }
-      const root = window.__preview_root__;
+      const previewRoot = window.__preview_root__;
       if (!SelectedComponent) {
-        root.render(
+        previewRoot.render(
           React.createElement('div', {
-            style: { color: '#f14c4c', padding: '24px', fontFamily: 'sans-serif' }
-          }, 'Component "${compName}" not found in export of ${normalizedFilePath}')
+            style: {
+              background: '#221518',
+              border: '1px solid rgba(241, 76, 76, 0.4)',
+              borderRadius: '8px',
+              padding: '24px 28px',
+              maxWidth: '480px',
+              margin: '32px auto',
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              color: '#ffffff'
+            }
+          }, [
+            React.createElement('h3', {
+              key: 'h',
+              style: { margin: '0 0 10px 0', color: '#ff8888', fontSize: '15px' }
+            }, 'Component Not Found in Export'),
+            React.createElement('p', {
+              key: 'p',
+              style: { margin: '0 0 16px 0', fontSize: '13px', color: '#cccccc', lineHeight: '1.5' }
+            }, 'Component "${compName}" was not found in exports of ${normalizedFilePath}. Check the component name or export syntax.'),
+            React.createElement('button', {
+              key: 'b',
+              style: {
+                background: '#0e639c',
+                color: '#ffffff',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: '500'
+              },
+              onClick: () => {
+                const payload = { filePath: '${normalizedFilePath}', line: ${state.componentStartLine || 1}, column: 1 };
+                window.parent.postMessage({ type: 'NAVIGATE_TO_SOURCE', payload }, '*');
+                fetch('/__preview_api/navigate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+                }).catch(() => {});
+              }
+            }, 'Open Component in Editor')
+          ])
         );
       } else {
-        root.render(
+        previewRoot.render(
           React.createElement(Harness, {
             ComponentToRender: SelectedComponent,
             userModule: UserModule,
@@ -203,7 +263,10 @@ function generateVirtualEntry(
             initialComponentName: '${compName}',
             initialVariants: initialVariants,
             initialAllComponents: initialAllComponents,
-            initialIsLocked: ${isLocked}
+            initialIsLocked: ${isLocked},
+            currentFilePath: '${normalizedFilePath}',
+            componentStartLine: ${state.componentStartLine || 1},
+            commentStartLine: ${state.commentStartLine || 1}
           })
         );
       }
@@ -223,6 +286,9 @@ export class PreviewViteServer {
   private extensionPath: string;
   public onLockToggled?: (locked?: boolean) => void;
   public onStopRequested?: () => void;
+  public onNavigateRequested?: (filePath: string, line?: number, column?: number) => void;
+  public onRuntimeError?: (error: RuntimeErrorPayload) => void;
+  public onConsoleLog?: (log: { level: string; text: string; timestamp?: string }) => void;
 
   constructor(extensionPath: string, port = 4545) {
     this.extensionPath = extensionPath;
@@ -283,9 +349,11 @@ export class PreviewViteServer {
       return this.port;
     }
 
-    const harnessEntryPath = path
-      .resolve(this.extensionPath, 'preview-app/src/Harness.tsx')
-      .replace(/\\/g, '/');
+    const harnessEntryPath = normalizeDriveLetter(
+      path
+        .resolve(this.extensionPath, 'preview-app/src/Harness.tsx')
+        .replace(/\\/g, '/')
+    );
 
     const previewPlugin = {
       name: 'vscode-component-preview-plugin',
@@ -313,6 +381,79 @@ export class PreviewViteServer {
             if (this.onStopRequested) {
               setTimeout(() => this.onStopRequested?.(), 50);
             }
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/navigate') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (data.filePath && this.onNavigateRequested) {
+                  this.onNavigateRequested(data.filePath, data.line, data.column);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/report_error') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (this.onRuntimeError) {
+                  this.onRuntimeError(data);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/log') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (this.onConsoleLog) {
+                  this.onConsoleLog(data);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__open-in-editor')) {
+            try {
+              const parsedUrl = new URL(req.url || '', 'http://127.0.0.1');
+              const fileParam = parsedUrl.searchParams.get('file');
+              if (fileParam && this.onNavigateRequested) {
+                const parts = fileParam.split(':');
+                let filePath = parts[0];
+                let line = 1;
+                let col = 1;
+                if (parts.length > 2 && /^[a-zA-Z]$/.test(parts[0]) && parts[1].startsWith('/')) {
+                  filePath = `${parts[0]}:${parts[1]}`;
+                  line = parseInt(parts[2], 10) || 1;
+                  col = parseInt(parts[3], 10) || 1;
+                } else if (parts.length >= 2) {
+                  line = parseInt(parts[1], 10) || 1;
+                  col = parseInt(parts[2], 10) || 1;
+                }
+                this.onNavigateRequested(filePath, line, col);
+              }
+            } catch {}
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
             return;
           }
 

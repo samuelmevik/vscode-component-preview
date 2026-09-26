@@ -1,19 +1,30 @@
 import { ActionLogItem } from './MockReduxProvider';
 
 type NetworkSubscriber = (item: ActionLogItem) => void;
-const subscribers = new Set<NetworkSubscriber>();
-
-export function subscribeToNetworkLogs(subscriber: NetworkSubscriber): () => void {
-  subscribers.add(subscriber);
-  return () => {
-    subscribers.delete(subscriber);
-  };
-}
 
 declare global {
   interface Window {
     __component_preview_network_installed__?: boolean;
+    __component_preview_network_subscribers__?: Set<NetworkSubscriber>;
   }
+}
+
+const fallbackNetworkSubscribers = new Set<NetworkSubscriber>();
+
+function getNetworkSubscribers(): Set<NetworkSubscriber> {
+  if (typeof window === 'undefined') return fallbackNetworkSubscribers;
+  if (!window.__component_preview_network_subscribers__) {
+    window.__component_preview_network_subscribers__ = new Set();
+  }
+  return window.__component_preview_network_subscribers__;
+}
+
+export function subscribeToNetworkLogs(subscriber: NetworkSubscriber): () => void {
+  const subs = getNetworkSubscribers();
+  subs.add(subscriber);
+  return () => {
+    subs.delete(subscriber);
+  };
 }
 
 function shouldIgnoreUrl(url: string): boolean {
@@ -78,7 +89,7 @@ function parsePayload(body: any): any {
 }
 
 function notifySubscribers(item: ActionLogItem) {
-  subscribers.forEach((sub) => {
+  getNetworkSubscribers().forEach((sub) => {
     try {
       sub(item);
     } catch {}

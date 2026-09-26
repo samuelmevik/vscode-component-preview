@@ -2,9 +2,11 @@ import React, { useMemo } from 'react';
 import { configureStore } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
 
+import { ErrorLocation } from './errorLocationParser';
+
 export interface ActionLogItem {
   id: string;
-  source: 'redux' | 'callback' | 'console' | 'network';
+  source: 'redux' | 'callback' | 'console' | 'network' | 'error';
   level?: 'log' | 'info' | 'warn' | 'error';
   name: string;
   payload?: any;
@@ -15,6 +17,7 @@ export interface ActionLogItem {
   method?: string;
   url?: string;
   timestamp: string;
+  location?: ErrorLocation;
 }
 
 interface MockReduxProviderProps {
