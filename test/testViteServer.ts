@@ -58,7 +58,11 @@ async function testServer() {
       console.error('Entry body:\n', entryRes.body);
       throw new Error('Virtual entry module did not include StoreModule_0 or storeModules map!');
     }
-    console.log('✅ /__preview_entry__.tsx virtual entrypoint and storeModules check passed');
+    if (!entryRes.body.includes('import.meta.hot.accept') || !entryRes.body.includes('__preview_root__')) {
+      console.error('Entry body:\n', entryRes.body);
+      throw new Error('Virtual entry module did not include HMR acceptance handlers or __preview_root__!');
+    }
+    console.log('✅ /__preview_entry__.tsx virtual entrypoint, storeModules, and HMR accept handlers verified');
 
     // 2b. Fetch Harness.tsx through Vite pipeline
     console.log('Fetching Harness.tsx through Vite pipeline...');

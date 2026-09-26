@@ -530,4 +530,22 @@ export const CatGallery: React.FC<CatGalleryProps> = ({
   );
 };
 
+export const Throwy = () => {
+  return <button onClick={() => { throw new Error('Intentional error for testing'); }}>Throw Error</button>;
+}
+
+export const Test = () => {
+  const [text, setText] = useState('');
+  return <>
+    <Throwy />
+    <input
+      type="text"
+      placeholder="Test Input"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+    />
+
+  </>;
+}
+
 export default CatGallery;

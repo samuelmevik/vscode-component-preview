@@ -408,27 +408,8 @@ export class PreviewManager {
     }
   }
 
-  private handleDocumentChange(event: vscode.TextDocumentChangeEvent) {
-    if (!this.panel) return;
-
-    if (this.isLocked) {
-      if (event.document.fileName === this.lockedFilePath && this.lockedComponentName) {
-        const scanResult = scanComponents(event.document.getText(), event.document.fileName);
-        const lockedComp = scanResult.components.find((c) => c.name === this.lockedComponentName);
-        if (lockedComp) {
-          const allComponentNames = scanResult.components.map((c) => c.name);
-          this.renderTargetComponent(event.document, lockedComp, false, allComponentNames);
-        }
-      }
-      return;
-    }
-
-    if (event.document.fileName === this.currentFilePath) {
-      const editor = vscode.window.activeTextEditor;
-      if (editor && editor.document === event.document) {
-        this.updatePreviewForEditor(editor, false);
-      }
-    }
+  private handleDocumentChange(_event: vscode.TextDocumentChangeEvent) {
+    // Live updates occur strictly on save (onSave) via Vite Hot Code Replacement
   }
 
   private async handleDocumentSave(document: vscode.TextDocument) {
@@ -436,21 +417,38 @@ export class PreviewManager {
       return;
     }
 
-    const config = vscode.workspace.getConfiguration('componentPreview');
-    const autoOpen = config.get<boolean>('autoOpenOnSave', false);
-    if (!autoOpen) {
+    const activeEditor = vscode.window.activeTextEditor;
+
+    if (!this.panel) {
+      const config = vscode.workspace.getConfiguration('componentPreview');
+      const autoOpen = config.get<boolean>('autoOpenOnSave', false);
+      if (autoOpen && activeEditor && activeEditor.document === document) {
+        await this.showPreview(activeEditor);
+      }
       return;
     }
 
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!this.panel) {
-      if (activeEditor && activeEditor.document === document) {
-        await this.showPreview(activeEditor);
+    // When preview panel is open, trigger hot code replacement on save without full webview reload
+    if (this.isLocked) {
+      if (document.fileName === this.lockedFilePath && this.lockedComponentName) {
+        const scanResult = scanComponents(document.getText(), document.fileName);
+        const lockedComp = scanResult.components.find((c) => c.name === this.lockedComponentName);
+        if (lockedComp) {
+          const allComponentNames = scanResult.components.map((c) => c.name);
+          await this.renderTargetComponent(document, lockedComp, false, allComponentNames);
+        }
       }
-    } else {
-      if (this.currentFilePath === document.fileName || !this.isLocked) {
-        if (activeEditor && activeEditor.document === document) {
-          await this.updatePreviewForEditor(activeEditor, true);
+      return;
+    }
+
+    if (this.currentFilePath === document.fileName || (activeEditor && activeEditor.document === document)) {
+      if (activeEditor && activeEditor.document === document) {
+        await this.updatePreviewForEditor(activeEditor, false);
+      } else {
+        const scanResult = scanComponents(document.getText(), document.fileName);
+        if (scanResult.targetComponent) {
+          const allComponentNames = scanResult.components.map((c) => c.name);
+          await this.renderTargetComponent(document, scanResult.targetComponent, false, allComponentNames);
         }
       }
     }

@@ -44,12 +44,20 @@ function generateVirtualEntry(
     return `
       import React from 'react';
       import ReactDOM from 'react-dom/client';
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(
-        React.createElement('div', {
-          style: { color: '#888', padding: '24px', fontFamily: 'sans-serif', textAlign: 'center' }
-        }, 'No active component selected for preview.')
-      );
+      const rootElement = document.getElementById('root');
+      if (rootElement) {
+        if (!window.__preview_root__) {
+          window.__preview_root__ = ReactDOM.createRoot(rootElement);
+        }
+        window.__preview_root__.render(
+          React.createElement('div', {
+            style: { color: '#888', padding: '24px', fontFamily: 'sans-serif', textAlign: 'center' }
+          }, 'No active component selected for preview.')
+        );
+      }
+      if (import.meta.hot) {
+        import.meta.hot.accept();
+      }
     `;
   }
 
@@ -175,7 +183,10 @@ function generateVirtualEntry(
 
     const rootElement = document.getElementById('root');
     if (rootElement) {
-      const root = ReactDOM.createRoot(rootElement);
+      if (!window.__preview_root__) {
+        window.__preview_root__ = ReactDOM.createRoot(rootElement);
+      }
+      const root = window.__preview_root__;
       if (!SelectedComponent) {
         root.render(
           React.createElement('div', {
@@ -196,6 +207,10 @@ function generateVirtualEntry(
           })
         );
       }
+    }
+
+    if (import.meta.hot) {
+      import.meta.hot.accept();
     }
   `;
 }
@@ -232,14 +247,33 @@ export class PreviewViteServer {
   }
 
   public updateState(newState: PreviewServerState) {
+    const fileChanged = this.state?.currentFile !== newState.currentFile;
+    const compChanged = this.state?.currentComponentName !== newState.currentComponentName;
     this.state = newState;
-    if (this.server) {
-      // Invalidate preview entry in Vite's module graph to ensure fresh renders
+
+    // Only invalidate preview entry if the preview target changed (different file or component).
+    // For edits within the same component, Vite's React Fast Refresh automatically hot-swaps
+    // the component in-place, preserving React state (inputs, useState, etc.).
+    if (this.server && (fileChanged || compChanged)) {
       const mods = Array.from(this.server.moduleGraph.idToModuleMap.values()).filter(
         (m) => m.id && m.id.includes('preview_entry.tsx')
       );
       for (const mod of mods) {
         this.server.moduleGraph.invalidateModule(mod);
+      }
+      const hot = (this.server as any).hot || (this.server as any).ws;
+      if (hot && typeof hot.send === 'function') {
+        hot.send({
+          type: 'update',
+          updates: [
+            {
+              type: 'js-update',
+              path: '/__preview_entry__.tsx',
+              acceptedPath: '/__preview_entry__.tsx',
+              timestamp: Date.now(),
+            },
+          ],
+        });
       }
     }
   }
@@ -312,7 +346,7 @@ export class PreviewViteServer {
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/__preview_entry__.tsx?t=${timestamp}"></script>
+    <script type="module" src="/__preview_entry__.tsx"></script>
   </body>
 </html>`);
             return;
@@ -322,13 +356,13 @@ export class PreviewViteServer {
         });
       },
       resolveId(id: string) {
-        if (id.startsWith('/__preview_entry__.tsx')) {
-          return '\0preview_entry.tsx?' + Date.now();
+        if (id === '/__preview_entry__.tsx' || id.startsWith('/__preview_entry__.tsx')) {
+          return '\0preview_entry.tsx';
         }
         return null;
       },
       load: (id: string) => {
-        if (id.startsWith('\0preview_entry.tsx')) {
+        if (id === '\0preview_entry.tsx' || id.startsWith('\0preview_entry.tsx')) {
           return generateVirtualEntry(this.state, harnessEntryPath);
         }
         return null;

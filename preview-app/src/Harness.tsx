@@ -14,6 +14,7 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  RefreshCw,
   Layers,
   Hand,
   Maximize,
@@ -57,6 +58,8 @@ const VIEWPORT_PRESETS: Record<Exclude<ViewportMode, 'responsive'>, { width: num
   desktop: { width: 1280, height: 800, label: 'Desktop (1280 × 800)' },
 };
 
+const EMPTY_STORE = Object.freeze({});
+
 export const Harness: React.FC<HarnessProps> = ({
   ComponentToRender,
   userModule = {},
@@ -75,6 +78,7 @@ export const Harness: React.FC<HarnessProps> = ({
   const [allComponents, setAllComponents] = useState<string[]>(initialAllComponents);
   const [viewportMode, setViewportMode] = useState<ViewportMode>('responsive');
   const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>('dark');
+  const [remountCount, setRemountCount] = useState<number>(0);
   // Camera navigation & zoom state (persists across component swaps & file switches)
   const [camera, setCamera] = useState<{ zoom: number; pan: { x: number; y: number } }>(() => {
     try {
@@ -143,6 +147,10 @@ export const Harness: React.FC<HarnessProps> = ({
             prev < message.payload.variants.length ? prev : 0
           );
         }
+      }
+
+      if (message.type === 'RESET_COMPONENT_STATE') {
+        setRemountCount((prev) => prev + 1);
       }
     };
 
@@ -721,6 +729,15 @@ export const Harness: React.FC<HarnessProps> = ({
             </button>
           </div>
 
+          {/* Reset Component State Button */}
+          <button
+            className="toolbar-btn"
+            onClick={() => setRemountCount((c) => c + 1)}
+            title="Reset Component State (cleanly remounts component with initial props & state)"
+          >
+            <RefreshCw size={13} />
+          </button>
+
           {/* Lock Button */}
           <button
             className={`preview-lock-btn ${isLocked ? 'locked' : 'unlocked'}`}
@@ -756,7 +773,7 @@ export const Harness: React.FC<HarnessProps> = ({
         onDoubleClick={handleDoubleClick}
         onAuxClick={handleAuxClick}
       >
-        <ErrorBoundary fallbackKey={`${componentName}-${activeVariantIndex}`}>
+        <ErrorBoundary key={remountCount} fallbackKey={`${componentName}-${activeVariantIndex}-${remountCount}`}>
           {activeVariant.parseError ? (
             <div className="preview-error-card">
               <div className="preview-error-header">
@@ -799,7 +816,7 @@ export const Harness: React.FC<HarnessProps> = ({
                 storeModule={activeStoreModule}
                 exportName={storeExportName}
                 slice={activeVariant.slice}
-                initialState={activeVariant.store || {}}
+                initialState={activeVariant.store || EMPTY_STORE}
                 onActionDispatched={addActionLog}
               >
                 <div className="preview-component-host">

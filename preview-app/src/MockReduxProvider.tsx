@@ -134,6 +134,14 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
   onActionDispatched,
   children,
 }) => {
+  const stateKey = useMemo(() => {
+    try {
+      return JSON.stringify(initialState || {});
+    } catch {
+      return '';
+    }
+  }, [initialState]);
+
   const store = useMemo(() => {
     const effectiveState =
       slice && !(slice in initialState)
@@ -179,7 +187,7 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
     }
 
     return createFallbackStore(effectiveState, onActionDispatched);
-  }, [storeModule, exportName, slice, initialState, onActionDispatched]);
+  }, [storeModule, exportName, slice, stateKey, onActionDispatched]);
 
   return <Provider store={store}>{children}</Provider>;
 };
