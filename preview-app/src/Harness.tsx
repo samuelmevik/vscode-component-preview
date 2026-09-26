@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Component,
   Lock,
@@ -15,6 +15,8 @@ import {
   ZoomOut,
   RotateCcw,
   Layers,
+  Hand,
+  Maximize,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
@@ -73,7 +75,43 @@ export const Harness: React.FC<HarnessProps> = ({
   const [allComponents, setAllComponents] = useState<string[]>(initialAllComponents);
   const [viewportMode, setViewportMode] = useState<ViewportMode>('responsive');
   const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>('dark');
-  const [zoom, setZoom] = useState<number>(100);
+  // Camera navigation & zoom state (persists across component swaps & file switches)
+  const [camera, setCamera] = useState<{ zoom: number; pan: { x: number; y: number } }>(() => {
+    try {
+      const saved = sessionStorage.getItem('vscode_preview_camera_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (
+          typeof parsed?.zoom === 'number' &&
+          typeof parsed?.pan?.x === 'number' &&
+          typeof parsed?.pan?.y === 'number'
+        ) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return { zoom: 100, pan: { x: 0, y: 0 } };
+  });
+  const [panMode, setPanMode] = useState<boolean>(false);
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [spacePressed, setSpacePressed] = useState<boolean>(false);
+  const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
+
+  const canvasWrapperRef = useRef<HTMLElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
+  const spacePressedRef = useRef(spacePressed);
+  spacePressedRef.current = spacePressed;
+  const panModeRef = useRef(panMode);
+  panModeRef.current = panMode;
+
+  // Persist camera position so it remains stable across component swaps
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vscode_preview_camera_state', JSON.stringify(camera));
+    } catch {}
+  }, [camera]);
 
   useEffect(() => {
     setIsLocked(initialIsLocked);
@@ -224,16 +262,324 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   const handleZoomIn = useCallback(() => {
-    setZoom((z) => Math.min(z + 25, 200));
+    setIsTransitioning(true);
+    setCamera((prev) => {
+      const nextZoom = Math.min(prev.zoom + 25, 500);
+      const s1 = prev.zoom / 100;
+      const s2 = nextZoom / 100;
+      return {
+        zoom: nextZoom,
+        pan: {
+          x: Math.round(prev.pan.x * (s2 / s1)),
+          y: Math.round(prev.pan.y * (s2 / s1)),
+        },
+      };
+    });
   }, []);
 
   const handleZoomOut = useCallback(() => {
-    setZoom((z) => Math.max(z - 25, 50));
+    setIsTransitioning(true);
+    setCamera((prev) => {
+      const nextZoom = Math.max(prev.zoom - 25, 10);
+      const s1 = prev.zoom / 100;
+      const s2 = nextZoom / 100;
+      return {
+        zoom: nextZoom,
+        pan: {
+          x: Math.round(prev.pan.x * (s2 / s1)),
+          y: Math.round(prev.pan.y * (s2 / s1)),
+        },
+      };
+    });
   }, []);
 
-  const handleZoomReset = useCallback(() => {
-    setZoom(100);
+  const handleResetCamera = useCallback(() => {
+    setIsTransitioning(true);
+    setCamera({
+      zoom: 100,
+      pan: { x: 0, y: 0 },
+    });
   }, []);
+
+  const handleFitToScreen = useCallback(() => {
+    const wrapper = canvasWrapperRef.current;
+    const stage = stageRef.current;
+    if (!wrapper || !stage) return;
+
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const availableWidth = wrapperRect.width - 64; // 32px padding on each side
+    const availableHeight = wrapperRect.height - 64;
+
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+
+    // Find the content target: device frame or component host
+    const contentEl =
+      stage.querySelector<HTMLElement>('.device-frame') ||
+      stage.querySelector<HTMLElement>('.preview-component-host') ||
+      (stage.firstElementChild as HTMLElement | null);
+
+    if (!contentEl) return;
+
+    const contentRect = contentEl.getBoundingClientRect();
+    const currentScale = cameraRef.current.zoom / 100;
+    const naturalWidth = contentRect.width / currentScale;
+    const naturalHeight = contentRect.height / currentScale;
+
+    if (naturalWidth <= 0 || naturalHeight <= 0) return;
+
+    const scaleX = availableWidth / naturalWidth;
+    const scaleY = availableHeight / naturalHeight;
+    const targetScale = Math.min(scaleX, scaleY, 1.0);
+    const targetZoom = Math.max(Math.round(targetScale * 100), 10);
+
+    setIsTransitioning(true);
+    setCamera({
+      zoom: targetZoom,
+      pan: { x: 0, y: 0 },
+    });
+  }, []);
+
+
+  // Zoom by scroll wheel with focal point under cursor, and trackpad swipe/shift-scroll support
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // If user holds Ctrl/Cmd or Space, or has Pan Mode explicitly active, they intend to zoom the canvas
+      const isZoomModifier = e.ctrlKey || e.metaKey || spacePressedRef.current || panModeRef.current;
+
+      if (!isZoomModifier) {
+        // Check if mouse is hovering inside a component with scrollable content
+        let curr = e.target as HTMLElement | null;
+        let hasScrollableContainer = false;
+
+        while (curr && curr !== wrapper) {
+          if (curr.classList && curr.classList.contains('preview-canvas-wrapper')) {
+            break;
+          }
+
+          const style = window.getComputedStyle(curr);
+          const oy = style.overflowY;
+          const ox = style.overflowX;
+
+          const isScrollableY =
+            (oy === 'auto' || oy === 'scroll' || oy === 'overlay') &&
+            curr.scrollHeight > curr.clientHeight + 1;
+
+          const isScrollableX =
+            (ox === 'auto' || ox === 'scroll' || ox === 'overlay') &&
+            curr.scrollWidth > curr.clientWidth + 1;
+
+          if (isScrollableY || isScrollableX) {
+            hasScrollableContainer = true;
+            break;
+          }
+
+          curr = curr.parentElement;
+        }
+
+        if (hasScrollableContainer) {
+          // Allow the scrollable component to scroll natively; do NOT zoom in/out!
+          return;
+        }
+      }
+
+      e.preventDefault();
+
+      // Horizontal trackpad swipe
+      if (Math.abs(e.deltaX) > 0 && Math.abs(e.deltaY) === 0) {
+        setIsTransitioning(false);
+        setCamera((prev) => ({
+          ...prev,
+          pan: {
+            x: Math.round(prev.pan.x - e.deltaX),
+            y: prev.pan.y,
+          },
+        }));
+        return;
+      }
+
+      // Normalize delta across browsers
+      let delta = -e.deltaY;
+      if (e.deltaMode === 1) {
+        delta *= 33;
+      } else if (e.deltaMode === 2) {
+        delta *= 100;
+      }
+
+      // Shift + wheel = horizontal pan
+      if (e.shiftKey) {
+        setIsTransitioning(false);
+        setCamera((prev) => ({
+          ...prev,
+          pan: {
+            x: Math.round(prev.pan.x + delta),
+            y: prev.pan.y,
+          },
+        }));
+        return;
+      }
+
+      const rect = wrapper.getBoundingClientRect();
+      const mouseX = e.clientX - (rect.left + rect.width / 2);
+      const mouseY = e.clientY - (rect.top + rect.height / 2);
+
+      // Smooth proportional zoom
+      const clampedDelta = Math.max(Math.min(delta, 120), -120);
+      const factor = Math.exp(clampedDelta * 0.002);
+
+      setIsTransitioning(false);
+
+      setCamera((prev) => {
+        const nextZoom = Math.min(Math.max(Math.round(prev.zoom * factor), 10), 500);
+        if (nextZoom === prev.zoom) return prev;
+
+        const s1 = prev.zoom / 100;
+        const s2 = nextZoom / 100;
+
+        return {
+          zoom: nextZoom,
+          pan: {
+            x: Math.round(mouseX - (mouseX - prev.pan.x) * (s2 / s1)),
+            y: Math.round(mouseY - (mouseY - prev.pan.y) * (s2 / s1)),
+          },
+        };
+      });
+    };
+
+    wrapper.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      wrapper.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
+  // Keyboard navigation: Spacebar for pan tool, H to toggle pan mode, Esc to exit, Ctrl+0 to reset
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const active = document.activeElement;
+      const isInput =
+        active &&
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          (active as HTMLElement).isContentEditable);
+
+      if (isInput) return;
+
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault();
+        setSpacePressed(true);
+      }
+      if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        setPanMode((prev) => !prev);
+      }
+      if (e.key === 'Escape') {
+        setPanMode(false);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        handleResetCamera();
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setSpacePressed(false);
+      }
+    };
+
+    const handleBlur = () => {
+      setSpacePressed(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [handleResetCamera]);
+
+  // Move camera via drag (Middle-click, Space+drag, Pan mode, Alt+drag, or dragging canvas background)
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      if (e.button !== 0 && e.button !== 1) return;
+
+      const isMiddleClick = e.button === 1;
+      const target = e.target as HTMLElement;
+      const isOverComponent = Boolean(target.closest('.preview-component-host'));
+
+      const shouldPan = isMiddleClick || spacePressed || panMode || e.altKey || !isOverComponent;
+
+      if (!shouldPan) return;
+
+      e.preventDefault();
+      setIsTransitioning(false);
+      setIsPanning(true);
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startPanX = cameraRef.current.pan.x;
+      const startPanY = cameraRef.current.pan.y;
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        moveEvent.preventDefault();
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+
+        setCamera((prev) => ({
+          ...prev,
+          pan: {
+            x: startPanX + dx,
+            y: startPanY + dy,
+          },
+        }));
+      };
+
+      const handleMouseUp = (upEvent: MouseEvent) => {
+        upEvent.preventDefault();
+        setIsPanning(false);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [spacePressed, panMode]
+  );
+
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      const target = e.target as HTMLElement;
+      const isOverComponent = Boolean(target.closest('.preview-component-host'));
+      if (!isOverComponent) {
+        handleResetCamera();
+      }
+    },
+    [handleResetCamera]
+  );
+
+  const handleAuxClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (e.button === 1) {
+      e.preventDefault();
+    }
+  }, []);
+
+  const canvasBgStyle = useMemo(() => {
+    if (canvasTheme === 'checkerboard') {
+      const px = camera.pan.x;
+      const py = camera.pan.y;
+      return {
+        backgroundPosition: `${px}px ${py}px, ${px}px ${py + 10}px, ${px + 10}px ${py - 10}px, ${px - 10}px ${py}px`,
+      };
+    }
+    return {
+      backgroundPosition: `${camera.pan.x}px ${camera.pan.y}px`,
+    };
+  }, [canvasTheme, camera.pan.x, camera.pan.y]);
 
   return (
     <div className={`preview-container theme-${canvasTheme}`}>
@@ -329,16 +675,49 @@ export const Harness: React.FC<HarnessProps> = ({
             )}
           </button>
 
-          {/* Zoom Controls */}
-          <div className="toolbar-btn-group zoom-group" title="Canvas Zoom">
-            <button className="toolbar-btn" onClick={handleZoomOut} title="Zoom Out (-25%)">
+          {/* Camera Navigation & Zoom Controls */}
+          <div className="toolbar-btn-group camera-group" title="Camera & Zoom Controls (Scroll to zoom | Drag background, Space+drag, or Middle-click to pan)">
+            <button
+              className={`toolbar-btn ${panMode ? 'active' : ''}`}
+              onClick={() => setPanMode((p) => !p)}
+              title={panMode ? 'Exit Pan Mode (H / Esc)' : 'Pan Tool (H) - Drag anywhere to move camera'}
+            >
+              <Hand size={13} />
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={handleZoomOut}
+              title="Zoom Out (or scroll wheel down)"
+            >
               <ZoomOut size={13} />
             </button>
-            <span className="zoom-text" onClick={handleZoomReset} title="Reset Zoom">
-              {zoom}%
+            <span
+              className="zoom-text"
+              onClick={handleResetCamera}
+              title="Camera zoom level (Click to reset to 100% & Center)"
+            >
+              {camera.zoom}%
             </span>
-            <button className="toolbar-btn" onClick={handleZoomIn} title="Zoom In (+25%)">
+            <button
+              className="toolbar-btn"
+              onClick={handleZoomIn}
+              title="Zoom In (or scroll wheel up)"
+            >
               <ZoomIn size={13} />
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={handleFitToScreen}
+              title="Fit to Screen - Scale component to fit visible canvas"
+            >
+              <Maximize size={13} />
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={handleResetCamera}
+              title="Reset Camera (100% & Centered)"
+            >
+              <RotateCcw size={13} />
             </button>
           </div>
 
@@ -369,7 +748,14 @@ export const Harness: React.FC<HarnessProps> = ({
       </header>
 
       {/* Main Canvas Area */}
-      <main className="preview-canvas-wrapper">
+      <main
+        ref={canvasWrapperRef}
+        className={`preview-canvas-wrapper ${isPanning ? 'is-panning' : ''} ${panMode ? 'pan-mode' : ''} ${spacePressed ? 'space-pressed' : ''}`}
+        style={canvasBgStyle}
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleDoubleClick}
+        onAuxClick={handleAuxClick}
+      >
         <ErrorBoundary fallbackKey={`${componentName}-${activeVariantIndex}`}>
           {activeVariant.parseError ? (
             <div className="preview-error-card">
@@ -424,33 +810,53 @@ export const Harness: React.FC<HarnessProps> = ({
               </MockReduxProvider>
             );
 
-            if (activeViewport) {
-              return (
-                <div className="device-frame-container" style={{ transform: `scale(${zoom / 100})` }}>
-                  <div className="device-frame-badge">{activeViewport.label}</div>
-                  <div
-                    className="device-frame"
-                    style={{
-                      width: activeViewport.width,
-                      height: activeViewport.height,
-                    }}
-                  >
-                    <div className="device-content">{renderedContent}</div>
-                  </div>
-                </div>
-              );
-            }
-
             return (
               <div
-                className="responsive-canvas-container"
-                style={{ transform: zoom !== 100 ? `scale(${zoom / 100})` : undefined }}
+                ref={stageRef}
+                className={`canvas-camera-stage ${isTransitioning ? 'transitioning' : ''}`}
+                style={{
+                  transform: `translate3d(${camera.pan.x}px, ${camera.pan.y}px, 0) scale(${camera.zoom / 100})`,
+                }}
               >
-                {renderedContent}
+                {activeViewport ? (
+                  <div className="device-frame-container">
+                    <div className="device-frame-badge">{activeViewport.label}</div>
+                    <div
+                      className="device-frame"
+                      style={{
+                        width: activeViewport.width,
+                        height: activeViewport.height,
+                      }}
+                    >
+                      <div className="device-content">{renderedContent}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="responsive-canvas-container">
+                    {renderedContent}
+                  </div>
+                )}
               </div>
             );
           })()}
         </ErrorBoundary>
+
+        {/* Floating Camera Status & Reset Pill */}
+        {(camera.pan.x !== 0 || camera.pan.y !== 0 || camera.zoom !== 100) && (
+          <div className="camera-indicator">
+            <span className="camera-coords">
+              Pan: {camera.pan.x > 0 ? `+${camera.pan.x}` : camera.pan.x}px,{' '}
+              {camera.pan.y > 0 ? `+${camera.pan.y}` : camera.pan.y}px &bull; {camera.zoom}%
+            </span>
+            <button
+              className="camera-reset-link"
+              onClick={handleResetCamera}
+              title="Reset camera to center (100%)"
+            >
+              <RotateCcw size={10} /> Reset
+            </button>
+          </div>
+        )}
       </main>
 
       {/* Action / Event Inspector Drawer */}

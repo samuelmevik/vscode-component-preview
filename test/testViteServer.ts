@@ -60,7 +60,21 @@ async function testServer() {
     }
     console.log('✅ /__preview_entry__.tsx virtual entrypoint and storeModules check passed');
 
-    console.log('\n🎉 Vite dev server, SCSS pipeline, and virtual entrypoint all verified successfully!');
+    // 2b. Fetch Harness.tsx through Vite pipeline
+    console.log('Fetching Harness.tsx through Vite pipeline...');
+    const harnessPath = path.resolve(extensionPath, 'preview-app/src/Harness.tsx').replace(/\\/g, '/');
+    const harnessRes = await fetchUrl(`http://127.0.0.1:${port}/@fs/${harnessPath}`);
+    console.log(`Harness Status: ${harnessRes.statusCode}`);
+    if (harnessRes.statusCode !== 200) {
+      console.error('Harness body:\n', harnessRes.body);
+      throw new Error(`Failed to load Harness.tsx through Vite: status ${harnessRes.statusCode}`);
+    }
+    if (!harnessRes.body.includes('canvas-camera-stage') || !harnessRes.body.includes('handleFitToScreen')) {
+      throw new Error('Harness.tsx compiled output did not include camera stage or fit-to-screen controls!');
+    }
+    console.log('✅ Harness.tsx camera controls and pan/zoom verified through Vite pipeline');
+
+    console.log('\n🎉 Vite dev server, SCSS pipeline, Harness camera stage, and virtual entrypoint all verified successfully!');
 
     // 3. Verify server.isRunning()
     if (!server.isRunning()) {

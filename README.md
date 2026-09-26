@@ -9,7 +9,7 @@ A high-performance VS Code extension providing live in-editor previews of React 
 - ⚡ **Instant In-Editor Preview**: Renders your JSX / TSX components in a live Webview pane without needing to start your entire web application.
 - 📱 **Responsive Viewport Presets**: Easily test components in **Responsive**, **Mobile** (375 × 667), **Tablet** (768 × 1024), and **Desktop** (1280 × 800) device frames with real dimensions.
 - 🌓 **Canvas Theme Modes**: Switch the preview canvas between **Dark**, **Light**, and **Transparency Checkerboard** backgrounds with one click.
-- 🔍 **Zoom & Pixel Inspection**: Inspect components at 50%, 75%, 100%, 125%, 150%, or 200% scale.
+- 🔍 **Camera Navigation & Focal Scroll Zoom**: Smoothly zoom from 10% to 500% by scrolling your mouse wheel (anchored to your cursor). Freely pan the camera across large components via **Middle-click drag**, **Space + drag**, **background drag**, or the **Pan Tool (`H`)**. Includes instant **Fit to Screen** and **Reset Camera** buttons.
 - 🗂️ **Multi-Component Dropdown**: Switch between any exported component in the current file directly from the preview header.
 - 💬 **Comment-Driven Mock Data**: Define mock `props`, `store`, `slice`, and `viewport` directly above your component using clean YAML syntax.
 - 🎨 **SCSS & CSS Modules Out-of-the-Box**: Native compilation and Hot Module Replacement (HMR) for `.scss` and `*.module.scss` files powered by Vite & Sass.

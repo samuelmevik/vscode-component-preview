@@ -200,11 +200,15 @@ html, body {
       }
     }
 
-    &.zoom-group {
+    &.zoom-group,
+    &.camera-group {
       .zoom-text {
-        font-size: 10px;
+        font-size: 11px;
+        font-weight: 500;
         color: $text-muted;
-        padding: 0 4px;
+        padding: 0 5px;
+        min-width: 36px;
+        text-align: center;
         cursor: pointer;
         user-select: none;
 
@@ -311,26 +315,64 @@ html, body {
 /* Canvas Area */
 .preview-canvas-wrapper {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
   position: relative;
   transition: background-color 0.2s ease;
+  user-select: none;
+  cursor: default;
+
+  &.is-panning {
+    cursor: grabbing !important;
+
+    * {
+      cursor: grabbing !important;
+      user-select: none !important;
+      pointer-events: none !important;
+    }
+  }
+
+  &.pan-mode,
+  &.space-pressed {
+    cursor: grab !important;
+
+    * {
+      cursor: grab !important;
+    }
+  }
+
+  .canvas-camera-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    transform-origin: center center;
+    will-change: transform;
+    pointer-events: auto;
+
+    &.transitioning {
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+  }
 
   .responsive-canvas-container {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    transform-origin: center center;
-    transition: transform 0.15s ease;
+    min-width: 100%;
+    min-height: 100%;
+    padding: 32px;
+    box-sizing: border-box;
   }
 
   .preview-component-host {
     display: inline-block;
-    max-width: 100%;
+    max-width: none;
+    position: relative;
+    user-select: auto;
   }
 
   /* Fixed Device Frame */
@@ -338,8 +380,6 @@ html, body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    transform-origin: center center;
-    transition: transform 0.15s ease;
 
     .device-frame-badge {
       font-size: 10px;
@@ -367,6 +407,54 @@ html, body {
         display: flex;
         align-items: center;
         justify-content: center;
+      }
+    }
+  }
+
+  /* Floating Camera Indicator */
+  .camera-indicator {
+    position: absolute;
+    bottom: 12px;
+    left: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(20, 24, 33, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: $text-muted;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    pointer-events: auto;
+    z-index: 40;
+    user-select: none;
+    animation: fadeIn 0.15s ease-out;
+
+    .camera-coords {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      color: #e2e8f0;
+    }
+
+    .camera-reset-link {
+      background: transparent;
+      border: none;
+      color: $accent-color;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+
+      &:hover {
+        background: rgba(0, 122, 204, 0.25);
+        color: #ffffff;
       }
     }
   }
