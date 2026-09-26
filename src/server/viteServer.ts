@@ -3,10 +3,12 @@ import * as http from 'http';
 import * as fs from 'fs';
 import { createServer, ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
+import { SourceMapConsumer } from 'source-map-js';
 import { ComponentPreviewMeta } from '../parser/commentParser';
 import { getWorkspaceAliases } from './workspaceAliases';
 
 export interface RuntimeErrorPayload {
+  id?: string;
   message: string;
   source?: string;
   location?: {
@@ -15,6 +17,7 @@ export interface RuntimeErrorPayload {
     functionName?: string;
     line: number;
     column: number;
+    originalResolved?: boolean;
   };
   stack?: string;
   timestamp?: string;
@@ -288,6 +291,7 @@ export class PreviewViteServer {
   public onStopRequested?: () => void;
   public onNavigateRequested?: (filePath: string, line?: number, column?: number) => void;
   public onRuntimeError?: (error: RuntimeErrorPayload) => void;
+  public onRuntimeErrorUpdate?: (data: { id?: string; location: any }) => void;
   public onConsoleLog?: (log: { level: string; text: string; timestamp?: string }) => void;
 
   constructor(extensionPath: string, port = 4545) {
@@ -387,11 +391,36 @@ export class PreviewViteServer {
           if (url.startsWith('/__preview_api/navigate') && req.method === 'POST') {
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
-            req.on('end', () => {
+            req.on('end', async () => {
               try {
                 const data = body ? JSON.parse(body) : {};
                 if (data.filePath && this.onNavigateRequested) {
-                  this.onNavigateRequested(data.filePath, data.line, data.column);
+                  let targetFile = data.filePath;
+                  let targetLine = data.line || 1;
+                  let targetCol = data.column || 1;
+                  if (!data.originalResolved) {
+                    const resolved = await this.resolveOriginalPosition(targetFile, targetLine, targetCol);
+                    targetFile = resolved.filePath;
+                    targetLine = resolved.line;
+                    targetCol = resolved.column;
+                  }
+                  this.onNavigateRequested(targetFile, targetLine, targetCol);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/report_error_update') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (this.onRuntimeErrorUpdate) {
+                  this.onRuntimeErrorUpdate(data);
                 }
               } catch {}
               res.setHeader('Content-Type', 'application/json');
@@ -403,10 +432,22 @@ export class PreviewViteServer {
           if (url.startsWith('/__preview_api/report_error') && req.method === 'POST') {
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
-            req.on('end', () => {
+            req.on('end', async () => {
               try {
                 const data = body ? JSON.parse(body) : {};
                 if (this.onRuntimeError) {
+                  if (data.location?.filePath && data.location?.line && !data.location.originalResolved) {
+                    const resolved = await this.resolveOriginalPosition(
+                      data.location.filePath,
+                      data.location.line,
+                      data.location.column || 1
+                    );
+                    data.location.filePath = resolved.filePath;
+                    data.location.line = resolved.line;
+                    data.location.column = resolved.column;
+                    data.location.fileName = path.basename(resolved.filePath);
+                    data.location.originalResolved = true;
+                  }
                   this.onRuntimeError(data);
                 }
               } catch {}
@@ -433,27 +474,30 @@ export class PreviewViteServer {
           }
 
           if (url.startsWith('/__open-in-editor')) {
-            try {
-              const parsedUrl = new URL(req.url || '', 'http://127.0.0.1');
-              const fileParam = parsedUrl.searchParams.get('file');
-              if (fileParam && this.onNavigateRequested) {
-                const parts = fileParam.split(':');
-                let filePath = parts[0];
-                let line = 1;
-                let col = 1;
-                if (parts.length > 2 && /^[a-zA-Z]$/.test(parts[0]) && parts[1].startsWith('/')) {
-                  filePath = `${parts[0]}:${parts[1]}`;
-                  line = parseInt(parts[2], 10) || 1;
-                  col = parseInt(parts[3], 10) || 1;
-                } else if (parts.length >= 2) {
-                  line = parseInt(parts[1], 10) || 1;
-                  col = parseInt(parts[2], 10) || 1;
+            (async () => {
+              try {
+                const parsedUrl = new URL(req.url || '', 'http://127.0.0.1');
+                const fileParam = parsedUrl.searchParams.get('file');
+                if (fileParam && this.onNavigateRequested) {
+                  const parts = fileParam.split(':');
+                  let filePath = parts[0];
+                  let line = 1;
+                  let col = 1;
+                  if (parts.length > 2 && /^[a-zA-Z]$/.test(parts[0]) && parts[1].startsWith('/')) {
+                    filePath = `${parts[0]}:${parts[1]}`;
+                    line = parseInt(parts[2], 10) || 1;
+                    col = parseInt(parts[3], 10) || 1;
+                  } else if (parts.length >= 2) {
+                    line = parseInt(parts[1], 10) || 1;
+                    col = parseInt(parts[2], 10) || 1;
+                  }
+                  const resolved = await this.resolveOriginalPosition(filePath, line, col);
+                  this.onNavigateRequested(resolved.filePath, resolved.line, resolved.column);
                 }
-                this.onNavigateRequested(filePath, line, col);
-              }
-            } catch {}
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ ok: true }));
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            })();
             return;
           }
 
@@ -551,6 +595,96 @@ export class PreviewViteServer {
 
   public getPreviewUrl(): string {
     return `http://127.0.0.1:${this.port}/__preview__`;
+  }
+
+  /**
+   * Resolves a transpiled generated (line, col) to the exact original TSX/JSX authoring line and column
+   * using Vite dev server sourcemaps.
+   */
+  public async resolveOriginalPosition(
+    filePath: string,
+    line: number = 1,
+    column: number = 1
+  ): Promise<{ filePath: string; line: number; column: number }> {
+    if (!this.server || !filePath) {
+      return { filePath, line, column };
+    }
+
+    try {
+      const normalized = filePath.replace(/\\/g, '/');
+      const candidates: string[] = [];
+
+      // 1. Vite /@fs/ absolute path
+      if (path.isAbsolute(filePath) || /^[a-zA-Z]:/.test(filePath)) {
+        candidates.push(`/@fs/${normalized.replace(/^\/+/, '')}`);
+      }
+
+      // 2. Relative to workspace root if inside root
+      if (this.server.config.root) {
+        const rootNorm = this.server.config.root.replace(/\\/g, '/');
+        if (normalized.startsWith(rootNorm)) {
+          candidates.push(normalized.substring(rootNorm.length));
+        }
+      }
+
+      // 3. Clean relative path candidates
+      const cleanRel = normalized
+        .replace(/^https?:\/\/[^/]+\//, '')
+        .replace(/^\/@fs\//, '')
+        .replace(/^\/+/, '');
+      candidates.push(`/${cleanRel}`);
+      candidates.push(`/${path.basename(cleanRel)}`);
+
+      for (const reqUrl of candidates) {
+        try {
+          const transformed = await this.server.transformRequest(reqUrl);
+          let rawMap = transformed?.map;
+
+          if (!rawMap && transformed?.code) {
+            const smMatch = transformed.code.match(
+              /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,(.+)$/m
+            );
+            if (smMatch) {
+              const jsonStr = Buffer.from(smMatch[1], 'base64').toString('utf8');
+              rawMap = JSON.parse(jsonStr);
+            }
+          }
+
+          if (rawMap) {
+            const smc = new SourceMapConsumer(rawMap as any);
+            const orig = smc.originalPositionFor({
+              line,
+              column: Math.max(0, column - 1),
+            });
+
+            if (orig && typeof orig.line === 'number') {
+              let origPath = filePath;
+              if (orig.source) {
+                const origSource = orig.source.replace(/\\/g, '/');
+                if (path.isAbsolute(origSource)) {
+                  origPath = origSource;
+                } else if (path.isAbsolute(filePath)) {
+                  origPath = path.resolve(path.dirname(filePath), origSource).replace(/\\/g, '/');
+                } else if (this.server.config.root) {
+                  origPath = path.resolve(this.server.config.root, origSource).replace(/\\/g, '/');
+                } else {
+                  origPath = origSource;
+                }
+              }
+              return {
+                filePath: origPath,
+                line: orig.line,
+                column: orig.column !== null ? orig.column + 1 : column,
+              };
+            }
+          }
+        } catch {}
+      }
+    } catch (err) {
+      console.warn('[Component Preview] Notice during sourcemap resolution:', err);
+    }
+
+    return { filePath, line, column };
   }
 
   public async stop(): Promise<void> {

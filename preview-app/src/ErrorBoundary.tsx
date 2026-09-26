@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertCircle, RefreshCw, ExternalLink, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
-import { parseErrorInfo, navigateToSource, ErrorLocation } from './errorLocationParser';
+import { parseErrorInfo, navigateToSource, ErrorLocation, resolveExactLocation } from './errorLocationParser';
 import { reportRuntimeError } from './errorInterceptor';
 
 interface ErrorBoundaryProps {
@@ -16,6 +16,7 @@ interface ErrorBoundaryState {
   hasError: boolean;
   error?: Error;
   errorInfo?: React.ErrorInfo;
+  resolvedLocation?: ErrorLocation;
   showFullStack: boolean;
 }
 
@@ -35,11 +36,31 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     try {
       reportRuntimeError(error, 'render', this.props.currentFilePath);
     } catch {}
+
+    const parsed = parseErrorInfo(
+      error,
+      this.props.currentFilePath,
+      this.props.componentStartLine || 1
+    );
+    if (parsed.primaryLocation && !parsed.primaryLocation.originalResolved) {
+      resolveExactLocation(parsed.primaryLocation)
+        .then((resolved) => {
+          if (
+            resolved &&
+            (resolved.line !== parsed.primaryLocation?.line ||
+              resolved.column !== parsed.primaryLocation?.column ||
+              resolved.originalResolved)
+          ) {
+            this.setState({ resolvedLocation: resolved });
+          }
+        })
+        .catch(() => {});
+    }
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps) {
     if (prevProps.fallbackKey !== this.props.fallbackKey && this.state.hasError) {
-      this.setState({ hasError: false, error: undefined, errorInfo: undefined });
+      this.setState({ hasError: false, error: undefined, errorInfo: undefined, resolvedLocation: undefined });
     }
   }
 
@@ -52,17 +73,19 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         this.props.componentStartLine || 1
       );
 
-      const targetLocation: ErrorLocation | undefined = parsed.primaryLocation || (
-        this.props.currentFilePath
+      const targetLocation: ErrorLocation | undefined =
+        this.state.resolvedLocation ||
+        parsed.primaryLocation ||
+        (this.props.currentFilePath
           ? {
               filePath: this.props.currentFilePath,
               fileName: this.props.currentFilePath.split(/[/\\]/).pop() || this.props.currentFilePath,
               functionName: this.props.componentName,
               line: this.props.componentStartLine || 1,
               column: 1,
+              originalResolved: true,
             }
-          : undefined
-      );
+          : undefined);
 
       const targetLabel = targetLocation?.functionName
         ? `<${targetLocation.functionName} />`

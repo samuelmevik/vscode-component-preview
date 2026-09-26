@@ -4,6 +4,10 @@ import {
   parseErrorInfo,
   normalizeSourcePath,
   isInternalFrame,
+  decodeVLQ,
+  findOriginalPosition,
+  resolveExactLocation,
+  RawSourceMap,
 } from '../preview-app/src/errorLocationParser';
 import {
   subscribeToRuntimeErrors,
@@ -79,6 +83,23 @@ assert.strictEqual(fallbackInfo.primaryLocation?.filePath, 'C:/Users/stenen/samp
 assert.strictEqual(fallbackInfo.primaryLocation?.line, 25);
 console.log('✅ parseErrorInfo fallback resolution passed');
 
+// Test 6b: Pure-JS VLQ Segment Decoder
+const decodedVLQ = decodeVLQ('AA8CY');
+assert.deepStrictEqual(decodedVLQ, [0, 0, 46, 12], 'VLQ decode segment must match spec');
+console.log('✅ decodeVLQ unit test passed');
+
+// Test 6c: findOriginalPosition on synthetic SourceMap
+const syntheticMap: RawSourceMap = {
+  version: 3,
+  sources: ['TestComponent.tsx'],
+  mappings: 'AAAA,aAAa;AAEb',
+};
+const syntheticPos = findOriginalPosition(syntheticMap, 1, 1);
+assert.ok(syntheticPos, 'Must find synthetic mapping');
+assert.strictEqual(syntheticPos?.source, 'TestComponent.tsx');
+assert.strictEqual(syntheticPos?.line, 1);
+console.log('✅ findOriginalPosition unit test passed');
+
 // Test 7: Runtime error subscription & deduplication
 console.log('\n--- Testing Runtime Error Interceptor & Deduplication ---');
 const receivedErrors: RuntimeErrorItem[] = [];
@@ -124,10 +145,30 @@ async function testViteNavigateEndpoint() {
   const port = await server.start(sampleWorkspace);
   assert.ok(server.isRunning(), 'Server must be running');
 
+  // Test 8a: resolveOriginalPosition resolves transpiled line 662 to TSX authoring line 534
+  console.log('\n--- Testing PreviewViteServer.resolveOriginalPosition ---');
+  const resolvedDirect = await server.resolveOriginalPosition('CatGallery.tsx', 662, 11);
+  assert.strictEqual(resolvedDirect.line, 534, 'Must resolve generated line 662 to TSX line 534');
+  assert.ok(resolvedDirect.column >= 40, 'Must resolve column near 40/41');
+  console.log(`✅ resolveOriginalPosition: 662:11 -> ${resolvedDirect.filePath}:${resolvedDirect.line}:${resolvedDirect.column}`);
+
+  // Test 8b: Client-side resolveExactLocation fetches Vite inline sourcemap and decodes
+  const clientResolved = await resolveExactLocation({
+    filePath: 'CatGallery.tsx',
+    fileName: 'CatGallery.tsx',
+    line: 662,
+    column: 11,
+    rawUrl: `http://127.0.0.1:${port}/CatGallery.tsx`,
+  });
+  assert.strictEqual(clientResolved?.line, 534, 'Client resolveExactLocation must resolve to line 534');
+  assert.strictEqual(clientResolved?.originalResolved, true);
+  console.log(`✅ resolveExactLocation: 662:11 -> ${clientResolved?.fileName}:${clientResolved?.line}:${clientResolved?.column}`);
+
+  // Test 8c: /__preview_api/navigate automatically remaps transpiled line 662 to 534
   const navPayload = {
-    filePath: 'C:/Users/stenen/Desktop/sample-workspace/CatGallery.tsx',
-    line: 534,
-    column: 41,
+    filePath: 'CatGallery.tsx',
+    line: 662,
+    column: 11,
   };
 
   const res = await fetch(`http://127.0.0.1:${port}/__preview_api/navigate`, {
@@ -140,15 +181,14 @@ async function testViteNavigateEndpoint() {
   assert.strictEqual(res.status, 200);
   assert.strictEqual(resJson.ok, true);
 
-  assert.strictEqual(navigatedFile, 'C:/Users/stenen/Desktop/sample-workspace/CatGallery.tsx');
-  assert.strictEqual(navigatedLine, 534);
-  assert.strictEqual(navigatedCol, 41);
+  assert.ok(navigatedFile?.endsWith('CatGallery.tsx'));
+  assert.strictEqual(navigatedLine, 534, 'Navigated line must be remapped to original line 534');
+  console.log(`✅ /__preview_api/navigate remapped 662 -> ${navigatedLine}:${navigatedCol}`);
 
   await server.stop();
-  console.log('✅ /__preview_api/navigate endpoint and callback verified');
 
-  // Test 9: Vite Server /__open-in-editor endpoint (handles Vite's error overlay clicks)
-  console.log('\n--- Testing Vite Server /__open-in-editor Endpoint ---');
+  // Test 9: Vite Server /__open-in-editor endpoint remaps transpiled 662 to original 534
+  console.log('\n--- Testing Vite Server /__open-in-editor Endpoint with Transpiled Lines ---');
   const server2 = new PreviewViteServer(extPath, 4620);
   let openInEditorFile: string | null = null;
   let openInEditorLine: number | null = null;
@@ -161,16 +201,15 @@ async function testViteNavigateEndpoint() {
   };
 
   const port2 = await server2.start(sampleWorkspace);
-  const openRes = await fetch(`http://127.0.0.1:${port2}/__open-in-editor?file=CatGallery.tsx:42:15`);
+  const openRes = await fetch(`http://127.0.0.1:${port2}/__open-in-editor?file=CatGallery.tsx:662:11`);
   const openJson = await openRes.json() as any;
   assert.strictEqual(openRes.status, 200);
   assert.strictEqual(openJson.ok, true);
-  assert.strictEqual(openInEditorFile, 'CatGallery.tsx');
-  assert.strictEqual(openInEditorLine, 42);
-  assert.strictEqual(openInEditorCol, 15);
+  assert.ok(openInEditorFile?.endsWith('CatGallery.tsx'));
+  assert.strictEqual(openInEditorLine, 534, 'open-in-editor must remap generated 662 to source 534');
+  console.log(`✅ /__open-in-editor remapped 662 -> ${openInEditorLine}:${openInEditorCol}`);
 
   await server2.stop();
-  console.log('✅ /__open-in-editor endpoint and callback verified');
 
   // Test 10: serializeLogArg preserving Error properties
   console.log('\n--- Testing serializeLogArg for Error Preservation ---');
@@ -186,12 +225,16 @@ async function testViteNavigateEndpoint() {
   assert.strictEqual(arrayWithErr[1].message, 'Test Serialization');
   console.log('✅ serializeLogArg preserves Error object messages and stacks');
 
-  // Test 11: Vite Server /__preview_api/report_error Endpoint
+  // Test 11: Vite Server /__preview_api/report_error Endpoint with automatic sourcemap remapping
   console.log('\n--- Testing Vite Server /__preview_api/report_error Endpoint ---');
   const server3 = new PreviewViteServer(extPath, 4630);
   let reportedError: any = null;
   server3.onRuntimeError = (err) => {
     reportedError = err;
+  };
+  let errorUpdatedData: any = null;
+  server3.onRuntimeErrorUpdate = (data) => {
+    errorUpdatedData = data;
   };
 
   const port3 = await server3.start(sampleWorkspace);
@@ -202,10 +245,10 @@ async function testViteNavigateEndpoint() {
       filePath: 'CatGallery.tsx',
       fileName: 'CatGallery.tsx',
       functionName: 'onClick',
-      line: 534,
+      line: 662,
       column: 11,
     },
-    stack: 'Error: Unhandled Exception\n    at onClick (CatGallery.tsx:534:11)',
+    stack: 'Error: Unhandled Exception\n    at onClick (CatGallery.tsx:662:11)',
     timestamp: '23:00:00',
   };
 
@@ -218,10 +261,23 @@ async function testViteNavigateEndpoint() {
   assert.strictEqual(reportRes.status, 200);
   assert.strictEqual(reportJson.ok, true);
   assert.strictEqual(reportedError?.message, 'Unhandled Exception');
-  assert.strictEqual(reportedError?.location?.functionName, 'onClick');
-  assert.strictEqual(reportedError?.location?.line, 534);
+  assert.strictEqual(reportedError?.location?.line, 534, 'Reported error location line must be remapped to 534');
+  console.log(`✅ /__preview_api/report_error remapped 662 -> ${reportedError?.location?.line}:${reportedError?.location?.column}`);
 
-  // Test 12: Vite Server /__preview_api/log Endpoint
+  // Test 12: Vite Server /__preview_api/report_error_update Endpoint
+  const updateRes = await fetch(`http://127.0.0.1:${port3}/__preview_api/report_error_update`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: 'abc-123', location: { fileName: 'CatGallery.tsx', line: 534, column: 41 } }),
+  });
+  const updateJson = await updateRes.json() as any;
+  assert.strictEqual(updateRes.status, 200);
+  assert.strictEqual(updateJson.ok, true);
+  assert.strictEqual(errorUpdatedData?.id, 'abc-123');
+  assert.strictEqual(errorUpdatedData?.location?.line, 534);
+  console.log('✅ /__preview_api/report_error_update verified');
+
+  // Test 13: Vite Server /__preview_api/log Endpoint
   let loggedConsole: any = null;
   server3.onConsoleLog = (log) => {
     loggedConsole = log;

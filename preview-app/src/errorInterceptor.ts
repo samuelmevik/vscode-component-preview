@@ -1,4 +1,4 @@
-import { ErrorLocation, parseErrorInfo } from './errorLocationParser';
+import { ErrorLocation, parseErrorInfo, resolveExactLocation } from './errorLocationParser';
 
 export interface RuntimeErrorItem {
   id: string;
@@ -126,6 +126,54 @@ export function reportRuntimeError(
         body: JSON.stringify(payload),
       }).catch(() => {});
     } catch {}
+  }
+
+  // 3. Asynchronously resolve exact source map coordinates (TSX/JSX original lines)
+  if (item.location && !item.location.originalResolved) {
+    resolveExactLocation(item.location)
+      .then((exactLoc) => {
+        if (
+          exactLoc &&
+          (exactLoc.line !== item.location?.line ||
+            exactLoc.column !== item.location?.column ||
+            exactLoc.originalResolved)
+        ) {
+          item.location = exactLoc;
+
+          // Re-notify subscribers so Toast and ActionPanel update in-place with exact line!
+          const subs = getSubscribers();
+          subs.forEach((sub) => {
+            try {
+              sub(item);
+            } catch {}
+          });
+
+          // Re-post updated exact location to VS Code parent host and dev server API
+          if (typeof window !== 'undefined') {
+            const updatePayload = {
+              id: item.id,
+              location: exactLoc,
+            };
+            try {
+              window.parent.postMessage(
+                {
+                  type: 'RUNTIME_ERROR_UPDATE',
+                  payload: updatePayload,
+                },
+                '*'
+              );
+            } catch {}
+            try {
+              fetch('/__preview_api/report_error_update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatePayload),
+              }).catch(() => {});
+            } catch {}
+          }
+        }
+      })
+      .catch(() => {});
   }
 
   return item;

@@ -54,6 +54,14 @@ export class PreviewManager {
       }
     };
 
+    this.viteServer.onRuntimeErrorUpdate = (data) => {
+      if (data.location) {
+        this.outputChannel.appendLine(
+          `[Runtime Error Exact Location] ${data.location.fileName}:${data.location.line}:${data.location.column}`
+        );
+      }
+    };
+
     this.viteServer.onConsoleLog = (log) => {
       const levelTag = log.level ? `[${log.level.toUpperCase()}]` : '[LOG]';
       this.outputChannel.appendLine(`[Console ${log.timestamp || ''}] ${levelTag} ${log.text}`);
@@ -243,11 +251,33 @@ export class PreviewManager {
           const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
           this.outputChannel.appendLine(`[Console ${timestamp || ''}] ${levelTag} ${text}`);
         } else if (message.type === 'RUNTIME_ERROR') {
-          const { message: errMsg, source, location, stack, timestamp } = message.payload || {};
+          let { message: errMsg, source, location, stack, timestamp } = message.payload || {};
+          if (location && !location.originalResolved && this.viteServer.isRunning()) {
+            const resolved = await this.viteServer.resolveOriginalPosition(
+              location.filePath,
+              location.line,
+              location.column || 1
+            );
+            location = {
+              ...location,
+              filePath: resolved.filePath,
+              fileName: path.basename(resolved.filePath),
+              line: resolved.line,
+              column: resolved.column,
+              originalResolved: true,
+            };
+          }
           const locStr = location ? ` at ${location.fileName}:${location.line}:${location.column}` : '';
           this.outputChannel.appendLine(`[Runtime Error ${timestamp || ''}] [${(source || 'error').toUpperCase()}] ${errMsg}${locStr}`);
           if (stack) {
             this.outputChannel.appendLine(stack);
+          }
+        } else if (message.type === 'RUNTIME_ERROR_UPDATE') {
+          const { location } = message.payload || {};
+          if (location) {
+            this.outputChannel.appendLine(
+              `[Runtime Error Exact Location] ${location.fileName}:${location.line}:${location.column}`
+            );
           }
         } else if (message.type === 'SWITCH_COMPONENT') {
           const targetName = message.payload?.componentName;
@@ -261,9 +291,9 @@ export class PreviewManager {
             }
           }
         } else if (message.type === 'NAVIGATE_TO_SOURCE') {
-          const { filePath, line, column } = message.payload || {};
+          const { filePath, line, column, originalResolved } = message.payload || {};
           if (filePath) {
-            await this.navigateToSource(filePath, line, column);
+            await this.navigateToSource(filePath, line, column, originalResolved);
           }
         }
       }, null, this.disposables);
@@ -589,7 +619,12 @@ export class PreviewManager {
    * Navigates to a specific file, line, and column in the active VS Code window,
    * placing the cursor directly on the throwing function or component.
    */
-  public async navigateToSource(filePath: string, line: number = 1, column: number = 1): Promise<void> {
+  public async navigateToSource(
+    filePath: string,
+    line: number = 1,
+    column: number = 1,
+    originalResolved?: boolean
+  ): Promise<void> {
     const now = Date.now();
     const navKey = `${filePath}:${line}:${column}`;
     if (navKey === this.lastNavigateTarget && now - this.lastNavigateTime < 300) {
@@ -599,11 +634,23 @@ export class PreviewManager {
     this.lastNavigateTarget = navKey;
 
     try {
-      let targetPath = this.resolveSourcePath(filePath);
+      let resolvedFile = filePath;
+      let targetLineNum = line;
+      let targetColNum = column;
+
+      // If coordinates are transpiled (not yet marked originalResolved), map them to original source
+      if (!originalResolved && this.viteServer.isRunning()) {
+        const resolved = await this.viteServer.resolveOriginalPosition(filePath, line, column);
+        resolvedFile = resolved.filePath;
+        targetLineNum = resolved.line;
+        targetColNum = resolved.column;
+      }
+
+      let targetPath = this.resolveSourcePath(resolvedFile);
 
       if (!targetPath) {
         // Fallback: search workspace for matching filename
-        const cleanName = path.basename(filePath.replace(/^[/\\]+/, '').split('?')[0].split('#')[0]);
+        const cleanName = path.basename(resolvedFile.replace(/^[/\\]+/, '').split('?')[0].split('#')[0]);
         if (cleanName) {
           const found = await vscode.workspace.findFiles(`**/${cleanName}`, '**/node_modules/**', 1);
           if (found.length > 0) {
@@ -626,8 +673,8 @@ export class PreviewManager {
       const uri = vscode.Uri.file(targetPath);
       const doc = await vscode.workspace.openTextDocument(uri);
 
-      const targetLine = Math.max((line || this.currentComponent?.startLine || 1) - 1, 0);
-      const targetCol = Math.max((column || 1) - 1, 0);
+      const targetLine = Math.max((targetLineNum || this.currentComponent?.startLine || 1) - 1, 0);
+      const targetCol = Math.max((targetColNum || 1) - 1, 0);
       const pos = new vscode.Position(targetLine, targetCol);
       const selection = new vscode.Range(pos, pos);
 

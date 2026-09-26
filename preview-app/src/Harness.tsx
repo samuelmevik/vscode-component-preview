@@ -252,8 +252,17 @@ export const Harness: React.FC<HarnessProps> = ({
     const unsubConsole = subscribeToConsoleLogs(addActionLog);
     const unsubNetwork = subscribeToNetworkLogs(addActionLog);
     const unsubErrors = subscribeToRuntimeErrors((item) => {
-      setRuntimeErrors((prev) => [item, ...prev.slice(0, 4)]);
-      addActionLog({
+      setRuntimeErrors((prev) => {
+        const existingIdx = prev.findIndex((e) => e.id === item.id);
+        if (existingIdx !== -1) {
+          const updated = [...prev];
+          updated[existingIdx] = item;
+          return updated;
+        }
+        return [item, ...prev.slice(0, 4)];
+      });
+
+      const logItem: ActionLogItem = {
         id: item.id,
         source: 'error',
         level: 'error',
@@ -270,6 +279,16 @@ export const Harness: React.FC<HarnessProps> = ({
         },
         timestamp: item.timestamp,
         location: item.location,
+      };
+
+      setActionLogs((prev) => {
+        const existingIdx = prev.findIndex((a) => a.id === item.id);
+        if (existingIdx !== -1) {
+          const updated = [...prev];
+          updated[existingIdx] = logItem;
+          return updated;
+        }
+        return [logItem, ...prev.slice(0, 49)];
       });
     });
 
