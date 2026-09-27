@@ -107,12 +107,16 @@ export function installConsoleInterceptor(): void {
       }
 
       let location: ErrorLocation | undefined;
-      if (level === 'error') {
-        const errorArg = args.find((a) => a instanceof Error || (a && typeof a === 'object' && a.stack));
-        if (errorArg) {
-          const parsed = parseErrorInfo(errorArg);
+      const errorArg = args.find((a) => a instanceof Error || (a && typeof a === 'object' && a.stack));
+      if (errorArg) {
+        const parsed = parseErrorInfo(errorArg);
+        location = parsed.primaryLocation;
+      } else {
+        try {
+          const traceErr = new Error();
+          const parsed = parseErrorInfo(traceErr);
           location = parsed.primaryLocation;
-        }
+        } catch {}
       }
 
       const payload = serializeLogArg(rawPayload);

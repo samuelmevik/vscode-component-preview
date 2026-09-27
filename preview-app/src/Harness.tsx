@@ -241,7 +241,7 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   const addActionLog = useCallback((item: ActionLogItem) => {
-    setActionLogs((prev) => [item, ...prev.slice(0, 49)]); // keep last 50 actions
+    setActionLogs((prev) => [item, ...prev.slice(0, 299)]); // keep last 300 actions
   }, []);
 
   const dismissRuntimeError = useCallback((id: string) => {

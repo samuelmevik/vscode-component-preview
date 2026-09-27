@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Trash2,
   Zap,
   Radio,
@@ -16,9 +17,14 @@ import {
   ExternalLink,
   Maximize2,
   Minimize2,
+  Layers,
+  ArrowDownUp,
+  Download,
+  Pin,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
 import { navigateToSource } from './errorLocationParser';
+import { JsonTreeView, highlightMatch } from './JsonTreeView';
 
 interface ActionPanelProps {
   logs: ActionLogItem[];
@@ -26,6 +32,58 @@ interface ActionPanelProps {
 }
 
 type FilterType = 'all' | 'errors' | 'network' | 'redux' | 'console' | 'callback';
+
+const DEFAULT_PANEL_HEIGHT = 270;
+const MIN_PANEL_HEIGHT = 80;
+const STORAGE_HEIGHT_KEY = 'component-preview-drawer-height';
+const STORAGE_GROUP_KEY = 'component-preview-group-similar';
+const STORAGE_PRESERVE_KEY = 'component-preview-preserve-log';
+const STORAGE_SORT_KEY = 'component-preview-sort-order';
+
+function getStatusDescription(status?: number): string {
+  if (!status) return '';
+  const statusMap: Record<number, string> = {
+    200: 'OK',
+    201: 'Created',
+    202: 'Accepted',
+    204: 'No Content',
+    301: 'Moved Permanently',
+    302: 'Found',
+    304: 'Not Modified',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    422: 'Unprocessable Entity',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+  };
+  return statusMap[status] || '';
+}
+
+function parseQueryParams(rawUrl?: string): [string, string][] {
+  if (!rawUrl || !rawUrl.includes('?')) return [];
+  try {
+    const dummyBase = 'http://127.0.0.1';
+    const parsed = new URL(rawUrl, dummyBase);
+    return Array.from(parsed.searchParams.entries());
+  } catch {
+    const qIndex = rawUrl.indexOf('?');
+    const qStr = rawUrl.slice(qIndex + 1);
+    const params: [string, string][] = [];
+    qStr.split('&').forEach((pair) => {
+      const [k, v] = pair.split('=');
+      if (k) params.push([decodeURIComponent(k), decodeURIComponent(v || '')]);
+    });
+    return params;
+  }
+}
 
 const LogSourceBadge: React.FC<{
   source: ActionLogItem['source'];
@@ -53,20 +111,301 @@ const LogSourceBadge: React.FC<{
   }
 };
 
-const DEFAULT_PANEL_HEIGHT = 270;
-const MIN_PANEL_HEIGHT = 80;
-const STORAGE_KEY = 'component-preview-drawer-height';
+interface GroupedLogItem {
+  key: string;
+  log: ActionLogItem;
+  count: number;
+  firstTimestamp: string;
+  latestTimestamp: string;
+}
+
+function getLogSignature(log: ActionLogItem): string {
+  const parts = [
+    log.source,
+    log.level || '',
+    log.name,
+    log.method || '',
+    log.url || '',
+    log.status || '',
+  ];
+  if (log.payload !== undefined) {
+    parts.push(typeof log.payload === 'object' ? JSON.stringify(log.payload) : String(log.payload));
+  }
+  if (log.response !== undefined) {
+    parts.push(typeof log.response === 'object' ? JSON.stringify(log.response) : String(log.response));
+  }
+  return parts.join('||');
+}
+
+const NetworkLogItemRow: React.FC<{
+  log: ActionLogItem;
+  count: number;
+  latestTimestamp: string;
+  searchQuery: string;
+  copiedId: string | null;
+  onCopy: (id: string, text: string) => void;
+}> = ({ log, count, latestTimestamp, searchQuery, copiedId, onCopy }) => {
+  const [showPayload, setShowPayload] = useState(true);
+  const [showResponse, setShowResponse] = useState(true);
+  const [showParams, setShowParams] = useState(true);
+
+  const isSuccess = log.status && log.status >= 200 && log.status < 400;
+  const isClientError = log.status && log.status >= 400 && log.status < 500;
+  const statusType = isSuccess ? 'success' : isClientError ? 'warn' : 'error';
+  const method = log.method || 'GET';
+  const statusDesc = getStatusDescription(log.status);
+  const queryParams = useMemo(() => parseQueryParams(log.url), [log.url]);
+
+  return (
+    <div className={`action-item network ${statusType}`}>
+      <div className="action-item-header">
+        <span className="source-tag">
+          <Globe size={11} /> HTTP
+        </span>
+        <span className={`method-badge method-${method.toLowerCase()}`}>
+          {method}
+        </span>
+        <span className="network-url" title={log.url}>
+          {highlightMatch(log.url || '', searchQuery)}
+        </span>
+        {count > 1 && (
+          <span className="log-count-badge" title={`Repeated ${count} times`}>
+            ×{count}
+          </span>
+        )}
+        <div className="action-header-right">
+          {log.status !== undefined && (
+            <span className={`network-status-badge ${statusType}`} title={statusDesc}>
+              {log.status} {log.statusText || statusDesc || ''}
+            </span>
+          )}
+          {log.duration && <span className="network-duration">{log.duration}</span>}
+          <button
+            className="copy-log-btn"
+            title="Copy request and response JSON"
+            onClick={() => {
+              onCopy(
+                log.id,
+                JSON.stringify(
+                  {
+                    method: log.method,
+                    url: log.url,
+                    status: log.status,
+                    duration: log.duration,
+                    queryParams,
+                    payload: log.payload,
+                    response: log.response,
+                  },
+                  null,
+                  2
+                )
+              );
+            }}
+          >
+            {copiedId === log.id ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
+          </button>
+          <span className="action-time">{latestTimestamp || log.timestamp}</span>
+        </div>
+      </div>
+
+      <div className="network-details">
+        {/* Parsed Query Parameters */}
+        {queryParams.length > 0 && (
+          <div className="network-section">
+            <div
+              className="network-section-header"
+              onClick={() => setShowParams(!showParams)}
+            >
+              <button className={`section-toggle-btn ${showParams ? 'open' : ''}`}>
+                <ChevronRight size={10} />
+              </button>
+              <span className="section-dot query-dot" />
+              <span className="network-section-title">Query Parameters ({queryParams.length})</span>
+            </div>
+            {showParams && (
+              <div className="query-params-table">
+                {queryParams.map(([k, v], idx) => (
+                  <div key={idx} className="query-param-row">
+                    <span className="query-param-key">{highlightMatch(k, searchQuery)}</span>
+                    <span className="query-param-sep">=</span>
+                    <span className="query-param-val">{highlightMatch(v, searchQuery)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Request Payload */}
+        {log.payload !== undefined && (
+          <div className="network-section">
+            <div
+              className="network-section-header"
+              onClick={() => setShowPayload(!showPayload)}
+            >
+              <button className={`section-toggle-btn ${showPayload ? 'open' : ''}`}>
+                <ChevronRight size={10} />
+              </button>
+              <span className="section-dot payload-dot" />
+              <span className="network-section-title">Request Payload</span>
+            </div>
+            {showPayload && (
+              <div className="json-wrapper">
+                <JsonTreeView data={log.payload} searchQuery={searchQuery} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Response Data */}
+        {log.response !== undefined && (
+          <div className="network-section">
+            <div
+              className="network-section-header"
+              onClick={() => setShowResponse(!showResponse)}
+            >
+              <button className={`section-toggle-btn ${showResponse ? 'open' : ''}`}>
+                <ChevronRight size={10} />
+              </button>
+              <span className="section-dot response-dot" />
+              <span className="network-section-title">Response Data</span>
+            </div>
+            {showResponse && (
+              <div className="json-wrapper">
+                <JsonTreeView data={log.response} searchQuery={searchQuery} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const StandardLogItemRow: React.FC<{
+  log: ActionLogItem;
+  count: number;
+  latestTimestamp: string;
+  searchQuery: string;
+  copiedId: string | null;
+  onCopy: (id: string, text: string) => void;
+}> = ({ log, count, latestTimestamp, searchQuery, copiedId, onCopy }) => {
+  const isErrorPayload =
+    log.payload && typeof log.payload === 'object' && (log.payload.__isError || log.payload.stack);
+
+  return (
+    <div className={`action-item ${log.source} ${log.level || ''}`}>
+      <div className="action-item-header">
+        <span className="source-tag">
+          <LogSourceBadge source={log.source} level={log.level} />
+        </span>
+        <span className="action-name">
+          {highlightMatch(log.name, searchQuery)}
+        </span>
+        {count > 1 && (
+          <span className="log-count-badge" title={`Repeated ${count} times`}>
+            ×{count}
+          </span>
+        )}
+        {log.location && (
+          <button
+            className="action-jump-pill"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigateToSource(log.location!);
+            }}
+            title={`Open ${log.location.filePath}:${log.location.line} in VS Code`}
+          >
+            <ExternalLink size={10} />
+            <span>
+              {log.location.fileName}:{log.location.line}
+            </span>
+          </button>
+        )}
+        <div className="action-header-right">
+          <button
+            className="copy-log-btn"
+            title="Copy payload to clipboard"
+            onClick={() => {
+              const textToCopy =
+                typeof log.payload === 'object'
+                  ? isErrorPayload
+                    ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
+                    : JSON.stringify(log.payload, null, 2)
+                  : String(log.payload ?? log.name);
+              onCopy(log.id, textToCopy);
+            }}
+          >
+            {copiedId === log.id ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
+          </button>
+          <span className="action-time">{latestTimestamp || log.timestamp}</span>
+        </div>
+      </div>
+
+      {log.payload !== undefined && (
+        <div className="standard-log-body">
+          {isErrorPayload ? (
+            <div className="error-payload-view">
+              {log.payload.message && (
+                <div className="error-payload-msg">{highlightMatch(log.payload.message, searchQuery)}</div>
+              )}
+              {log.payload.stack && (
+                <pre className="error-payload-stack">{highlightMatch(log.payload.stack, searchQuery)}</pre>
+              )}
+            </div>
+          ) : typeof log.payload === 'object' ? (
+            <div className="json-wrapper">
+              <JsonTreeView data={log.payload} searchQuery={searchQuery} />
+            </div>
+          ) : (
+            <pre className="action-payload">{highlightMatch(String(log.payload), searchQuery)}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
+
+  // Group similar consecutive logs
+  const [groupSimilar, setGroupSimilar] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_GROUP_KEY);
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  // Preserve log across reloads
+  const [preserveLog, setPreserveLog] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_PRESERVE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Sort order: newest first (top) vs oldest first (stream)
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_SORT_KEY);
+      return saved === 'oldest' ? 'oldest' : 'newest';
+    } catch {
+      return 'newest';
+    }
+  });
 
   // Resizable drawer height
   const [height, setHeight] = useState<number>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(STORAGE_HEIGHT_KEY);
       if (saved) {
         const parsed = parseInt(saved, 10);
         if (!isNaN(parsed) && parsed >= MIN_PANEL_HEIGHT) {
@@ -83,15 +422,35 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
 
   const startYRef = useRef<number>(0);
   const startHeightRef = useRef<number>(height);
+  const listBodyRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
 
   // Save non-maximized height to localStorage
   useEffect(() => {
     if (!isMaximized && height >= MIN_PANEL_HEIGHT) {
       try {
-        localStorage.setItem(STORAGE_KEY, String(height));
+        localStorage.setItem(STORAGE_HEIGHT_KEY, String(height));
       } catch {}
     }
   }, [height, isMaximized]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_GROUP_KEY, String(groupSimilar));
+    } catch {}
+  }, [groupSimilar]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PRESERVE_KEY, String(preserveLog));
+    } catch {}
+  }, [preserveLog]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_SORT_KEY, sortOrder);
+    } catch {}
+  }, [sortOrder]);
 
   // Adjust height on window resize to ensure drawer remains within viewport
   useEffect(() => {
@@ -111,6 +470,22 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
     window.addEventListener('resize', handleWindowResize);
     return () => window.removeEventListener('resize', handleWindowResize);
   }, [isMaximized]);
+
+  // Global hotkey: Ctrl+` or Cmd+` or Ctrl+J to toggle panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === '~' || e.key.toLowerCase() === 'j')) {
+        e.preventDefault();
+        setIsExpanded((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Handle pointer down on resizer top handle
   const handleResizeStart = useCallback(
@@ -155,7 +530,6 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
         document.body.style.userSelect = '';
 
         const deltaY = startYRef.current - upEvent.clientY;
-        // If dragged down towards the bottom past snap threshold, collapse
         if (startHeightRef.current + deltaY < 60) {
           setIsExpanded(false);
           setHeight((prev) => Math.max(prev, DEFAULT_PANEL_HEIGHT));
@@ -232,6 +606,39 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
     return result;
   }, [logs, filter, searchQuery]);
 
+  // Group similar consecutive logs
+  const groupedLogs = useMemo(() => {
+    const list = sortOrder === 'oldest' ? [...filteredLogs].reverse() : filteredLogs;
+    if (!groupSimilar) {
+      return list.map((log) => ({
+        key: log.id,
+        log,
+        count: 1,
+        firstTimestamp: log.timestamp,
+        latestTimestamp: log.timestamp,
+      }));
+    }
+
+    const groups: GroupedLogItem[] = [];
+    for (const log of list) {
+      const sig = getLogSignature(log);
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.key === sig) {
+        lastGroup.count++;
+        lastGroup.latestTimestamp = log.timestamp;
+      } else {
+        groups.push({
+          key: sig,
+          log,
+          count: 1,
+          firstTimestamp: log.timestamp,
+          latestTimestamp: log.timestamp,
+        });
+      }
+    }
+    return groups;
+  }, [filteredLogs, groupSimilar, sortOrder]);
+
   const counts = useMemo(() => {
     let consoleCount = 0;
     let reduxCount = 0;
@@ -255,6 +662,67 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   }, [logs]);
 
   const { consoleCount, reduxCount, callbackCount, networkCount, errorCount, warnCount } = counts;
+
+  // Auto-scroll management for stream mode
+  const handleScroll = useCallback(() => {
+    if (!listBodyRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = listBodyRef.current;
+    isNearBottomRef.current = scrollHeight - (scrollTop + clientHeight) < 40;
+  }, []);
+
+  useEffect(() => {
+    if (sortOrder === 'oldest' && isNearBottomRef.current && listBodyRef.current) {
+      listBodyRef.current.scrollTop = listBodyRef.current.scrollHeight;
+    }
+  }, [groupedLogs, sortOrder]);
+
+  const handleCopyLog = useCallback((id: string, text: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1200);
+  }, []);
+
+  const handleCopyAll = useCallback(() => {
+    const exportData = filteredLogs.map((item) => ({
+      source: item.source,
+      level: item.level,
+      name: item.name,
+      method: item.method,
+      url: item.url,
+      status: item.status,
+      duration: item.duration,
+      payload: item.payload,
+      response: item.response,
+      location: item.location ? `${item.location.fileName}:${item.location.line}` : undefined,
+      timestamp: item.timestamp,
+    }));
+    navigator.clipboard?.writeText(JSON.stringify(exportData, null, 2));
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 1500);
+  }, [filteredLogs]);
+
+  const handleDownloadLogs = useCallback(() => {
+    const exportData = filteredLogs.map((item) => ({
+      source: item.source,
+      level: item.level,
+      name: item.name,
+      method: item.method,
+      url: item.url,
+      status: item.status,
+      duration: item.duration,
+      payload: item.payload,
+      response: item.response,
+      location: item.location ? `${item.location.fileName}:${item.location.line}` : undefined,
+      timestamp: item.timestamp,
+    }));
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `preview-logs-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filteredLogs]);
 
   return (
     <div
@@ -327,7 +795,7 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                 setIsExpanded(true);
               }
             }}
-            title={isExpanded ? 'Collapse drawer' : 'Expand drawer'}
+            title={isExpanded ? 'Collapse drawer (Ctrl+`)' : 'Expand drawer (Ctrl+`)'}
           >
             {isExpanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
           </button>
@@ -371,11 +839,12 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
             </div>
 
             <div className="toolbar-right">
+              {/* Search Bar */}
               <div className="search-input-wrapper">
                 <Search size={11} className="search-icon" />
                 <input
                   type="text"
-                  placeholder="Filter by url, method, payload..."
+                  placeholder="Search logs, URLs, payloads..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="search-input"
@@ -385,6 +854,60 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                 )}
               </div>
 
+              {/* Group Similar Logs Toggle */}
+              <button
+                className={`toolbar-icon-btn ${groupSimilar ? 'active' : ''}`}
+                onClick={() => setGroupSimilar(!groupSimilar)}
+                title={groupSimilar ? 'Grouping consecutive identical logs (Click to un-group)' : 'Click to group consecutive logs'}
+              >
+                <Layers size={11} />
+                <span>Group</span>
+              </button>
+
+              {/* Sort Order Toggle */}
+              <button
+                className={`toolbar-icon-btn ${sortOrder === 'oldest' ? 'active' : ''}`}
+                onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
+                title={sortOrder === 'newest' ? 'Order: Newest first (Click for Stream mode)' : 'Order: Oldest first (Stream mode active)'}
+              >
+                <ArrowDownUp size={11} />
+                <span>{sortOrder === 'newest' ? 'Newest' : 'Stream'}</span>
+              </button>
+
+              {/* Preserve Log Toggle */}
+              <button
+                className={`toolbar-icon-btn ${preserveLog ? 'active' : ''}`}
+                onClick={() => setPreserveLog(!preserveLog)}
+                title={preserveLog ? 'Preserve Log active (logs stay across reloads)' : 'Click to preserve logs across reloads'}
+              >
+                <Pin size={11} />
+                <span>Preserve</span>
+              </button>
+
+              {/* Copy All Logs */}
+              {filteredLogs.length > 0 && (
+                <button
+                  className="toolbar-icon-btn"
+                  onClick={handleCopyAll}
+                  title="Copy all filtered logs to clipboard as JSON"
+                >
+                  {copiedAll ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
+                  <span>{copiedAll ? 'Copied!' : 'Copy All'}</span>
+                </button>
+              )}
+
+              {/* Download Logs */}
+              {filteredLogs.length > 0 && (
+                <button
+                  className="toolbar-icon-btn"
+                  onClick={handleDownloadLogs}
+                  title="Download logs as JSON file"
+                >
+                  <Download size={11} />
+                </button>
+              )}
+
+              {/* Clear Logs */}
               {logs.length > 0 && (
                 <button className="clear-text-btn" onClick={onClear} title="Clear all logs">
                   <Trash2 size={11} /> Clear
@@ -393,145 +916,43 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
             </div>
           </div>
 
-          <div className="action-panel-body">
-            {filteredLogs.length === 0 ? (
+          <div
+            className="action-panel-body"
+            ref={listBodyRef}
+            onScroll={handleScroll}
+          >
+            {groupedLogs.length === 0 ? (
               <div className="action-empty">
                 <span>No {filter === 'all' ? 'actions, HTTP requests, or console logs' : filter} recorded yet.</span>
                 <small>HTTP requests (axios/fetch/RTK Query), button clicks, console logs, and Redux dispatches appear here live.</small>
               </div>
             ) : (
               <div className="action-list">
-                {filteredLogs.map((log) => {
+                {groupedLogs.map(({ key, log, count, latestTimestamp }) => {
                   if (log.source === 'network') {
-                    const isSuccess = log.status && log.status >= 200 && log.status < 400;
-                    const isClientError = log.status && log.status >= 400 && log.status < 500;
-                    const statusType = isSuccess ? 'success' : isClientError ? 'warn' : 'error';
-                    const method = log.method || 'GET';
-
                     return (
-                      <div key={log.id} className={`action-item network ${statusType}`}>
-                        <div className="action-item-header">
-                          <span className="source-tag">
-                            <Globe size={11} /> HTTP
-                          </span>
-                          <span className={`method-badge method-${method.toLowerCase()}`}>
-                            {method}
-                          </span>
-                          <span className="network-url" title={log.url}>{log.url}</span>
-                          <div className="action-header-right">
-                            {log.status !== undefined && (
-                              <span className={`network-status-badge ${statusType}`}>
-                                {log.status} {log.statusText || (log.status === 200 ? 'OK' : '')}
-                              </span>
-                            )}
-                            {log.duration && <span className="network-duration">{log.duration}</span>}
-                            <button
-                              className="copy-log-btn"
-                              title="Copy request and response data"
-                              onClick={() => {
-                                const dataToCopy = {
-                                  method: log.method,
-                                  url: log.url,
-                                  status: log.status,
-                                  duration: log.duration,
-                                  payload: log.payload,
-                                  response: log.response,
-                                };
-                                navigator.clipboard?.writeText(JSON.stringify(dataToCopy, null, 2));
-                                setCopiedId(log.id);
-                                setTimeout(() => setCopiedId(null), 1500);
-                              }}
-                            >
-                              {copiedId === log.id ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
-                            </button>
-                            <span className="action-time">{log.timestamp}</span>
-                          </div>
-                        </div>
-
-                        {/* Clean Request Payload & Response Data */}
-                        <div className="network-details">
-                          {log.payload !== undefined && (
-                            <div className="network-section">
-                              <div className="network-section-title">
-                                <span className="section-dot payload-dot"></span> Request Payload
-                              </div>
-                              <pre className="action-payload">
-                                {typeof log.payload === 'object'
-                                  ? JSON.stringify(log.payload, null, 2)
-                                  : String(log.payload)}
-                              </pre>
-                            </div>
-                          )}
-
-                          {log.response !== undefined && (
-                            <div className="network-section">
-                              <div className="network-section-title">
-                                <span className="section-dot response-dot"></span> Response Data
-                              </div>
-                              <pre className="action-payload response-payload">
-                                {typeof log.response === 'object'
-                                  ? JSON.stringify(log.response, null, 2)
-                                  : String(log.response)}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <NetworkLogItemRow
+                        key={key}
+                        log={log}
+                        count={count}
+                        latestTimestamp={latestTimestamp}
+                        searchQuery={searchQuery}
+                        copiedId={copiedId}
+                        onCopy={handleCopyLog}
+                      />
                     );
                   }
 
-                  // Non-network items (redux, callback, console)
                   return (
-                    <div key={log.id} className={`action-item ${log.source} ${log.level || ''}`}>
-                      <div className="action-item-header">
-                        <span className="source-tag">
-                          <LogSourceBadge source={log.source} level={log.level} />
-                        </span>
-                        <span className="action-name">{log.name}</span>
-                        {log.location && (
-                          <button
-                            className="action-jump-pill"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigateToSource(log.location!);
-                            }}
-                            title={`Open ${log.location.filePath}:${log.location.line} in VS Code`}
-                          >
-                            <ExternalLink size={10} />
-                            <span>{log.location.fileName}:{log.location.line}</span>
-                          </button>
-                        )}
-                        <div className="action-header-right">
-                          <button
-                            className="copy-log-btn"
-                            title="Copy payload to clipboard"
-                            onClick={() => {
-                              const textToCopy =
-                                typeof log.payload === 'object'
-                                  ? (log.payload.__isError || log.payload.stack
-                                      ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
-                                      : JSON.stringify(log.payload, null, 2))
-                                  : String(log.payload ?? log.name);
-                              navigator.clipboard?.writeText(textToCopy);
-                              setCopiedId(log.id);
-                              setTimeout(() => setCopiedId(null), 1500);
-                            }}
-                          >
-                            {copiedId === log.id ? <Check size={11} className="copied-icon" /> : <Copy size={11} />}
-                          </button>
-                          <span className="action-time">{log.timestamp}</span>
-                        </div>
-                      </div>
-                      {log.payload !== undefined && (
-                        <pre className="action-payload">
-                          {typeof log.payload === 'object'
-                            ? (log.payload.__isError || log.payload.stack
-                                ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
-                                : JSON.stringify(log.payload, null, 2))
-                            : String(log.payload)}
-                        </pre>
-                      )}
-                    </div>
+                    <StandardLogItemRow
+                      key={key}
+                      log={log}
+                      count={count}
+                      latestTimestamp={latestTimestamp}
+                      searchQuery={searchQuery}
+                      copiedId={copiedId}
+                      onCopy={handleCopyLog}
+                    />
                   );
                 })}
               </div>
