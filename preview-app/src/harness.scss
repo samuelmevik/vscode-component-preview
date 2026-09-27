@@ -775,6 +775,47 @@ html, body {
       }
     }
 
+    .live-store-view {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+
+      .live-store-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+
+        .live-store-title {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #ffffff;
+
+          .live-store-icon {
+            color: #58a6ff;
+          }
+
+          .live-badge {
+            font-size: 9px;
+            text-transform: uppercase;
+            font-weight: 700;
+            background: rgba(74, 222, 128, 0.2);
+            color: #4ade80;
+            border: 1px solid rgba(74, 222, 128, 0.4);
+            padding: 0 4px;
+            border-radius: 3px;
+          }
+        }
+      }
+
+      .live-store-tree {
+        max-height: 450px;
+        overflow-y: auto;
+      }
+    }
+
     .action-list {
       display: flex;
       flex-direction: column;
@@ -819,6 +860,65 @@ html, body {
             font-family: 'Consolas', monospace;
             line-height: 16px;
             display: inline-block;
+          }
+
+          .redux-endpoint-pill {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(168, 85, 247, 0.16);
+            border: 1px solid rgba(168, 85, 247, 0.38);
+            color: #c084fc;
+            padding: 0 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: 'Consolas', monospace;
+            line-height: 16px;
+          }
+
+          .async-status-pill {
+            display: inline-flex;
+            align-items: center;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 0 5px;
+            border-radius: 3px;
+            font-family: 'Consolas', monospace;
+            line-height: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+
+            &.pending {
+              background: rgba(59, 130, 246, 0.18);
+              border: 1px solid rgba(59, 130, 246, 0.42);
+              color: #60a5fa;
+            }
+
+            &.fulfilled {
+              background: rgba(74, 222, 128, 0.18);
+              border: 1px solid rgba(74, 222, 128, 0.4);
+              color: #4ade80;
+            }
+
+            &.rejected {
+              background: rgba(248, 113, 113, 0.2);
+              border: 1px solid rgba(248, 113, 113, 0.45);
+              color: #f87171;
+            }
+          }
+
+          .redux-slice-pill {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            color: #34d399;
+            padding: 0 5px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+            font-family: 'Consolas', monospace;
+            line-height: 15px;
           }
 
           .action-jump-pill {
@@ -1018,99 +1118,105 @@ html, body {
             color: $text-muted;
           }
 
-          .network-details {
+          .network-details,
+          .redux-subsections {
             display: flex;
             flex-direction: column;
             gap: 8px;
             margin-top: 8px;
+          }
 
-            .network-section {
-              .network-section-header {
-                display: flex;
-                align-items: center;
-                gap: 5px;
-                cursor: pointer;
-                user-select: none;
-                margin-bottom: 3px;
+          .network-section,
+          .redux-section {
+            .network-section-header {
+              display: flex;
+              align-items: center;
+              gap: 5px;
+              cursor: pointer;
+              user-select: none;
+              margin-bottom: 3px;
 
-                &:hover {
-                  .network-section-title {
-                    color: #ffffff;
-                  }
-                }
-
-                .section-toggle-btn {
-                  background: transparent;
-                  border: none;
-                  padding: 0;
-                  color: $text-muted;
-                  cursor: pointer;
-                  display: inline-flex;
-                  align-items: center;
-                  transition: transform 0.15s ease;
-
-                  &.open {
-                    transform: rotate(90deg);
-                  }
-                }
-
+              &:hover {
                 .network-section-title {
-                  font-size: 10px;
-                  font-weight: 600;
-                  text-transform: uppercase;
-                  color: $text-muted;
-                  transition: color 0.15s ease;
-                }
-
-                .section-dot {
-                  width: 5px;
-                  height: 5px;
-                  border-radius: 50%;
-                  display: inline-block;
-
-                  &.query-dot {
-                    background-color: #a78bfa;
-                  }
-
-                  &.payload-dot {
-                    background-color: #fbbf24;
-                  }
-
-                  &.response-dot {
-                    background-color: #38bdf8;
-                  }
+                  color: #ffffff;
                 }
               }
 
-              .query-params-table {
-                background: rgba(0, 0, 0, 0.25);
-                border: 1px solid rgba(255, 255, 255, 0.05);
-                border-radius: 4px;
-                padding: 6px 10px;
-                font-family: 'Consolas', monospace;
-                font-size: 11px;
+              .section-toggle-btn {
+                background: transparent;
+                border: none;
+                padding: 0;
+                color: $text-muted;
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                transition: transform 0.15s ease;
+
+                &.open {
+                  transform: rotate(90deg);
+                }
+              }
+
+              .network-section-title {
+                font-size: 10px;
+                font-weight: 600;
+                text-transform: uppercase;
+                color: $text-muted;
+                transition: color 0.15s ease;
+              }
+
+              .section-dot {
+                width: 5px;
+                height: 5px;
+                border-radius: 50%;
+                display: inline-block;
+
+                &.query-dot {
+                  background-color: #a78bfa;
+                }
+
+                &.payload-dot {
+                  background-color: #fbbf24;
+                }
+
+                &.response-dot {
+                  background-color: #38bdf8;
+                }
+
+                &.state-dot {
+                  background-color: #34d399;
+                }
+              }
+            }
+
+            .query-params-table {
+              background: rgba(0, 0, 0, 0.25);
+              border: 1px solid rgba(255, 255, 255, 0.05);
+              border-radius: 4px;
+              padding: 6px 10px;
+              font-family: 'Consolas', monospace;
+              font-size: 11px;
+              display: flex;
+              flex-direction: column;
+              gap: 3px;
+
+              .query-param-row {
                 display: flex;
-                flex-direction: column;
-                gap: 3px;
+                align-items: center;
+                gap: 4px;
 
-                .query-param-row {
-                  display: flex;
-                  align-items: center;
-                  gap: 4px;
+                .query-param-key {
+                  color: #9cdcfe;
+                  font-weight: 600;
+                }
 
-                  .query-param-key {
-                    color: #9cdcfe;
-                    font-weight: 600;
-                  }
+                .query-param-sep {
+                  color: $text-muted;
+                }
 
-                  .query-param-sep {
-                    color: $text-muted;
-                  }
-
-                  .query-param-val {
-                    color: #ce9178;
-                    word-break: break-all;
-                  }
+                .query-param-val {
+                  color: #ce9178;
+                  word-break: break-all;
                 }
               }
             }

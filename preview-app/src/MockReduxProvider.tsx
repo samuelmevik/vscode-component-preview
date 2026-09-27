@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { configureStore } from '@reduxjs/toolkit';
 import { Provider } from 'react-redux';
 
 import { ErrorLocation } from './errorLocationParser';
+import { interceptStore, subscribeToReduxLogs } from './reduxInterceptor';
 
 export interface ActionLogItem {
   id: string;
@@ -18,6 +19,11 @@ export interface ActionLogItem {
   url?: string;
   timestamp: string;
   location?: ErrorLocation;
+  // Redux metadata
+  asyncStatus?: 'pending' | 'fulfilled' | 'rejected';
+  endpoint?: string;
+  queryArgs?: any;
+  changedSlices?: string[];
 }
 
 interface MockReduxProviderProps {
@@ -67,58 +73,12 @@ function instantiateStore(storeOrFactory: any, initialState: Record<string, any>
   return null;
 }
 
-function interceptDispatch(realStore: any, onActionDispatched: (item: ActionLogItem) => void) {
-  realStore.__preview_listener__ = onActionDispatched;
-  if (realStore.__preview_intercepted__) return;
-
-  const originalDispatch = realStore.dispatch.bind(realStore);
-  realStore.dispatch = function (action: any) {
-    try {
-      if (action && typeof action.type === 'string' && !action.type.startsWith('@@redux/')) {
-        let payload = action.payload;
-        if (payload === undefined && typeof action === 'object' && action !== null) {
-          const { type, ...rest } = action;
-          if (Object.keys(rest).length > 0) payload = rest;
-        }
-
-        realStore.__preview_listener__?.({
-          id: Math.random().toString(36).substring(2, 9),
-          source: 'redux',
-          name: action.type,
-          payload,
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      } else if (typeof action === 'function') {
-        realStore.__preview_listener__?.({
-          id: Math.random().toString(36).substring(2, 9),
-          source: 'redux',
-          name: action.name ? `[Thunk] ${action.name}` : '[Thunk]',
-          timestamp: new Date().toLocaleTimeString(),
-        });
-      }
-    } catch (e) {
-      console.error('[Component Preview] Action logging error:', e);
-    }
-    return originalDispatch(action);
-  };
-  realStore.__preview_intercepted__ = true;
-}
-
 function createFallbackStore(initialState: Record<string, any>, onActionDispatched: (item: ActionLogItem) => void) {
-  const reducer = (state = initialState, action: any) => {
-    if (action && typeof action.type === 'string' && !action.type.startsWith('@@redux/')) {
-      onActionDispatched({
-        id: Math.random().toString(36).substring(2, 9),
-        source: 'redux',
-        name: action.type,
-        payload: action.payload,
-        timestamp: new Date().toLocaleTimeString(),
-      });
-    }
+  const reducer = (state = initialState, _action: any) => {
     return state;
   };
 
-  return configureStore({
+  const store = configureStore({
     reducer,
     preloadedState: initialState,
     middleware: (getDefaultMiddleware) =>
@@ -127,6 +87,9 @@ function createFallbackStore(initialState: Record<string, any>, onActionDispatch
         immutableCheck: false,
       }),
   });
+
+  interceptStore(store, onActionDispatched);
+  return store;
 }
 
 export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
@@ -172,7 +135,7 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
             reducer: { [slice]: sliceReducer },
             preloadedState: effectiveState,
           });
-          interceptDispatch(created, onActionDispatched);
+          interceptStore(created, onActionDispatched);
           return created;
         }
       }
@@ -180,7 +143,7 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
       const realStore = instantiateStore(storeOrFactory, effectiveState);
 
       if (realStore && typeof realStore.dispatch === 'function') {
-        interceptDispatch(realStore, onActionDispatched);
+        interceptStore(realStore, onActionDispatched);
         return realStore;
       }
 
@@ -191,6 +154,10 @@ export const MockReduxProvider: React.FC<MockReduxProviderProps> = ({
 
     return createFallbackStore(effectiveState, onActionDispatched);
   }, [storeModule, exportName, slice, stateKey, onActionDispatched]);
+
+  useEffect(() => {
+    return subscribeToReduxLogs(onActionDispatched);
+  }, [onActionDispatched]);
 
   return <Provider store={store}>{children}</Provider>;
 };

@@ -21,10 +21,12 @@ import {
   ArrowDownUp,
   Download,
   Pin,
+  Database,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
 import { navigateToSource } from './errorLocationParser';
 import { JsonTreeView, highlightMatch } from './JsonTreeView';
+import { getLiveStoreState } from './reduxInterceptor';
 
 interface ActionPanelProps {
   logs: ActionLogItem[];
@@ -113,6 +115,7 @@ const LogSourceBadge: React.FC<{
 
 interface GroupedLogItem {
   key: string;
+  signature: string;
   log: ActionLogItem;
   count: number;
   firstTimestamp: string;
@@ -127,6 +130,8 @@ function getLogSignature(log: ActionLogItem): string {
     log.method || '',
     log.url || '',
     log.status || '',
+    log.asyncStatus || '',
+    log.endpoint || '',
   ];
   if (log.payload !== undefined) {
     parts.push(typeof log.payload === 'object' ? JSON.stringify(log.payload) : String(log.payload));
@@ -290,6 +295,7 @@ const StandardLogItemRow: React.FC<{
   copiedId: string | null;
   onCopy: (id: string, text: string) => void;
 }> = ({ log, count, latestTimestamp, searchQuery, copiedId, onCopy }) => {
+  const [showState, setShowState] = useState(false);
   const isErrorPayload =
     log.payload && typeof log.payload === 'object' && (log.payload.__isError || log.payload.stack);
 
@@ -302,6 +308,29 @@ const StandardLogItemRow: React.FC<{
         <span className="action-name">
           {highlightMatch(log.name, searchQuery)}
         </span>
+        {log.endpoint && (
+          <span className="redux-endpoint-pill" title={`Endpoint: ${log.endpoint}`}>
+            {highlightMatch(log.endpoint, searchQuery)}
+          </span>
+        )}
+        {log.asyncStatus && (
+          <span
+            className={`async-status-pill ${log.asyncStatus}`}
+            title={`Async status: ${log.asyncStatus}`}
+          >
+            {log.asyncStatus.toUpperCase()}
+          </span>
+        )}
+        {log.changedSlices && log.changedSlices.length > 0 && (
+          <span
+            className="redux-slice-pill"
+            title={`Slices updated: ${log.changedSlices.join(', ')}`}
+          >
+            {log.changedSlices.length === 1
+              ? `slice: ${log.changedSlices[0]}`
+              : `slices: ${log.changedSlices.join(', ')}`}
+          </span>
+        )}
         {count > 1 && (
           <span className="log-count-badge" title={`Repeated ${count} times`}>
             ×{count}
@@ -323,16 +352,33 @@ const StandardLogItemRow: React.FC<{
           </button>
         )}
         <div className="action-header-right">
+          {log.duration && <span className="network-duration">{log.duration}</span>}
           <button
             className="copy-log-btn"
             title="Copy payload to clipboard"
             onClick={() => {
-              const textToCopy =
-                typeof log.payload === 'object'
-                  ? isErrorPayload
-                    ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
-                    : JSON.stringify(log.payload, null, 2)
-                  : String(log.payload ?? log.name);
+              let textToCopy: string;
+              if (log.source === 'redux' && (log.endpoint || log.asyncStatus || log.queryArgs || log.changedSlices)) {
+                textToCopy = JSON.stringify(
+                  {
+                    action: log.name,
+                    endpoint: log.endpoint,
+                    status: log.asyncStatus,
+                    duration: log.duration,
+                    slices: log.changedSlices,
+                    args: log.queryArgs,
+                    payload: log.payload,
+                  },
+                  null,
+                  2
+                );
+              } else if (typeof log.payload === 'object') {
+                textToCopy = isErrorPayload
+                  ? `${log.payload.message || ''}\n\n${log.payload.stack || ''}`.trim()
+                  : JSON.stringify(log.payload, null, 2);
+              } else {
+                textToCopy = String(log.payload ?? log.name);
+              }
               onCopy(log.id, textToCopy);
             }}
           >
@@ -342,25 +388,49 @@ const StandardLogItemRow: React.FC<{
         </div>
       </div>
 
-      {log.payload !== undefined && (
+      {/* Redux Query Arguments + Response Payload view for fulfilled async actions */}
+      {log.source === 'redux' && log.queryArgs !== undefined && log.asyncStatus === 'fulfilled' ? (
         <div className="standard-log-body">
-          {isErrorPayload ? (
-            <div className="error-payload-view">
-              {log.payload.message && (
-                <div className="error-payload-msg">{highlightMatch(log.payload.message, searchQuery)}</div>
-              )}
-              {log.payload.stack && (
-                <pre className="error-payload-stack">{highlightMatch(log.payload.stack, searchQuery)}</pre>
-              )}
+          <div className="redux-section">
+            <div className="network-section-header">
+              <span className="section-dot query-dot" />
+              <span className="network-section-title">Query Arguments</span>
             </div>
-          ) : typeof log.payload === 'object' ? (
+            <div className="json-wrapper">
+              <JsonTreeView data={log.queryArgs} searchQuery={searchQuery} />
+            </div>
+          </div>
+          <div className="redux-section" style={{ marginTop: 6 }}>
+            <div className="network-section-header">
+              <span className="section-dot response-dot" />
+              <span className="network-section-title">Result Data</span>
+            </div>
             <div className="json-wrapper">
               <JsonTreeView data={log.payload} searchQuery={searchQuery} />
             </div>
-          ) : (
-            <pre className="action-payload">{highlightMatch(String(log.payload), searchQuery)}</pre>
-          )}
+          </div>
         </div>
+      ) : (
+        log.payload !== undefined && (
+          <div className="standard-log-body">
+            {isErrorPayload ? (
+              <div className="error-payload-view">
+                {log.payload.message && (
+                  <div className="error-payload-msg">{highlightMatch(log.payload.message, searchQuery)}</div>
+                )}
+                {log.payload.stack && (
+                  <pre className="error-payload-stack">{highlightMatch(log.payload.stack, searchQuery)}</pre>
+                )}
+              </div>
+            ) : typeof log.payload === 'object' ? (
+              <div className="json-wrapper">
+                <JsonTreeView data={log.payload} searchQuery={searchQuery} />
+              </div>
+            ) : (
+              <pre className="action-payload">{highlightMatch(String(log.payload), searchQuery)}</pre>
+            )}
+          </div>
+        )
       )}
     </div>
   );
@@ -372,6 +442,7 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
+  const [viewStoreState, setViewStoreState] = useState(false);
 
   // Group similar consecutive logs
   const [groupSimilar, setGroupSimilar] = useState<boolean>(() => {
@@ -585,11 +656,18 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
       const q = searchQuery.toLowerCase();
       result = result.filter((log) => {
         if (log.name.toLowerCase().includes(q)) return true;
+        if (log.endpoint && log.endpoint.toLowerCase().includes(q)) return true;
+        if (log.asyncStatus && log.asyncStatus.toLowerCase().includes(q)) return true;
         if (log.url && log.url.toLowerCase().includes(q)) return true;
         if (log.method && log.method.toLowerCase().includes(q)) return true;
         if (log.status && String(log.status).includes(q)) return true;
         if (log.location?.fileName?.toLowerCase().includes(q)) return true;
         if (log.location?.functionName?.toLowerCase().includes(q)) return true;
+        if (log.queryArgs !== undefined) {
+          const argsStr =
+            typeof log.queryArgs === 'object' ? JSON.stringify(log.queryArgs) : String(log.queryArgs);
+          if (argsStr.toLowerCase().includes(q)) return true;
+        }
         if (log.payload !== undefined) {
           const payloadStr =
             typeof log.payload === 'object' ? JSON.stringify(log.payload) : String(log.payload);
@@ -620,15 +698,17 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
     }
 
     const groups: GroupedLogItem[] = [];
-    for (const log of list) {
+    for (let i = 0; i < list.length; i++) {
+      const log = list[i];
       const sig = getLogSignature(log);
       const lastGroup = groups[groups.length - 1];
-      if (lastGroup && lastGroup.key === sig) {
+      if (lastGroup && lastGroup.signature === sig) {
         lastGroup.count++;
         lastGroup.latestTimestamp = log.timestamp;
       } else {
         groups.push({
-          key: sig,
+          key: log.id || `group-${i}`,
+          signature: sig,
           log,
           count: 1,
           firstTimestamp: log.timestamp,
@@ -874,6 +954,18 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                 <span>{sortOrder === 'newest' ? 'Newest' : 'Stream'}</span>
               </button>
 
+              {/* Live Store State Toggle (when in Redux filter) */}
+              {filter === 'redux' && (
+                <button
+                  className={`toolbar-icon-btn ${viewStoreState ? 'active' : ''}`}
+                  onClick={() => setViewStoreState(!viewStoreState)}
+                  title={viewStoreState ? 'Switch back to Redux Action stream' : 'Inspect live Redux store state on-demand'}
+                >
+                  <Database size={11} />
+                  <span>{viewStoreState ? 'Actions' : 'Live State'}</span>
+                </button>
+              )}
+
               {/* Preserve Log Toggle */}
               <button
                 className={`toolbar-icon-btn ${preserveLog ? 'active' : ''}`}
@@ -921,7 +1013,35 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
             ref={listBodyRef}
             onScroll={handleScroll}
           >
-            {groupedLogs.length === 0 ? (
+            {filter === 'redux' && viewStoreState ? (
+              <div className="live-store-view">
+                <div className="live-store-header">
+                  <div className="live-store-title">
+                    <Database size={13} className="live-store-icon" />
+                    <span>Live Redux Store State</span>
+                    <span className="live-badge">Live</span>
+                  </div>
+                  <button
+                    className="toolbar-icon-btn"
+                    onClick={() => {
+                      const state = getLiveStoreState();
+                      navigator.clipboard?.writeText(JSON.stringify(state, null, 2));
+                    }}
+                    title="Copy full live store state as JSON"
+                  >
+                    <Copy size={11} />
+                    <span>Copy State</span>
+                  </button>
+                </div>
+                <div className="json-wrapper live-store-tree">
+                  <JsonTreeView
+                    data={getLiveStoreState()}
+                    initialExpandedDepth={1}
+                    searchQuery={searchQuery}
+                  />
+                </div>
+              </div>
+            ) : groupedLogs.length === 0 ? (
               <div className="action-empty">
                 <span>No {filter === 'all' ? 'actions, HTTP requests, or console logs' : filter} recorded yet.</span>
                 <small>HTTP requests (axios/fetch/RTK Query), button clicks, console logs, and Redux dispatches appear here live.</small>

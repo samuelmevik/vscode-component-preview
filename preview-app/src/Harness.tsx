@@ -27,6 +27,7 @@ import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
 import { ActionPanel } from './ActionPanel';
 import { subscribeToConsoleLogs } from './consoleInterceptor';
 import { subscribeToNetworkLogs } from './networkInterceptor';
+import './reduxInterceptor';
 import { prepareProps } from './propsResolver';
 import {
   subscribeToRuntimeErrors,
@@ -241,7 +242,10 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   const addActionLog = useCallback((item: ActionLogItem) => {
-    setActionLogs((prev) => [item, ...prev.slice(0, 299)]); // keep last 300 actions
+    setActionLogs((prev) => {
+      if (prev.some((p) => p.id === item.id)) return prev;
+      return [item, ...prev.slice(0, 299)];
+    });
   }, []);
 
   const dismissRuntimeError = useCallback((id: string) => {
