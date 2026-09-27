@@ -6,6 +6,7 @@ declare global {
   interface Window {
     __component_preview_network_installed__?: boolean;
     __component_preview_network_subscribers__?: Set<NetworkSubscriber>;
+    __component_preview_native_fetch__?: typeof fetch;
   }
 }
 
@@ -27,15 +28,28 @@ export function subscribeToNetworkLogs(subscriber: NetworkSubscriber): () => voi
   };
 }
 
-function shouldIgnoreUrl(url: string): boolean {
+export function shouldIgnoreUrl(url: string, init?: RequestInit | any): boolean {
   if (!url) return true;
+
+  // 1. Explicit internal request markers
+  if (init?.headers) {
+    const h = init.headers;
+    if (
+      (typeof Headers !== 'undefined' && h instanceof Headers && (h.has('x-component-preview-internal') || h.has('x-preview-internal'))) ||
+      (typeof h === 'object' && ('x-component-preview-internal' in h || 'x-preview-internal' in h))
+    ) {
+      return true;
+    }
+  }
+
+  // 2. Vite and component preview internal path segments
   if (
     url.includes('/@vite/') ||
     url.includes('/@fs/') ||
     url.includes('/@id/') ||
     url.includes('/@react-refresh') ||
     url.includes('/__preview') ||
-    url.includes('/__preview_api/') ||
+    url.includes('/__preview_api') ||
     url.includes('/node_modules/') ||
     url.includes('.vite/') ||
     url.includes('hot-update')
@@ -44,9 +58,38 @@ function shouldIgnoreUrl(url: string): boolean {
   }
 
   try {
-    const parsed = new URL(url, window.location.href);
-    if (parsed.pathname.startsWith('/@') || parsed.pathname.startsWith('/__')) {
-      return true;
+    const loc = typeof window !== 'undefined' && window.location ? window.location.href : 'http://127.0.0.1:4545';
+    const parsed = new URL(url, loc);
+    const locOrigin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : new URL(loc).origin;
+
+    // If the request is to the local Vite preview server origin
+    if (parsed.origin === locOrigin) {
+      const p = parsed.pathname;
+
+      // Ignore internal prefixes
+      if (p.startsWith('/@') || p.startsWith('/__')) {
+        return true;
+      }
+
+      // Ignore Vite module cache-busting and transform queries (?t=timestamp, ?import, ?direct, etc.)
+      if (
+        parsed.searchParams.has('t') ||
+        parsed.searchParams.has('import') ||
+        parsed.searchParams.has('direct') ||
+        parsed.searchParams.has('raw') ||
+        parsed.searchParams.has('url') ||
+        parsed.searchParams.has('worker')
+      ) {
+        return true;
+      }
+
+      // Ignore Vite source file, stylesheet, asset, and sourcemap loads on the preview server
+      if (/\.(tsx|jsx|ts|js|mjs|cjs|css|scss|sass|less|vue|svelte|map|json|wasm)$/i.test(p)) {
+        return true;
+      }
     }
   } catch {}
 
@@ -123,6 +166,7 @@ export function installNetworkInterceptor(): void {
   // 1. Intercept window.fetch (Used by fetch, RTK Query createApi fetchBaseQuery, modern axios adapters)
   if (typeof window.fetch === 'function') {
     const originalFetch = window.fetch.bind(window);
+    window.__component_preview_native_fetch__ = originalFetch;
 
     window.fetch = async function (input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       let rawUrl = '';
@@ -134,7 +178,7 @@ export function installNetworkInterceptor(): void {
         rawUrl = input.url;
       }
 
-      if (shouldIgnoreUrl(rawUrl)) {
+      if (shouldIgnoreUrl(rawUrl, init)) {
         return originalFetch(input, init);
       }
 

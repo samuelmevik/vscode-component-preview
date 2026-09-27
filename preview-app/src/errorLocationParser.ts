@@ -416,9 +416,18 @@ export async function fetchSourceMapForUrl(url: string): Promise<RawSourceMap | 
       }
     }
 
-    if (typeof fetch !== 'function') return null;
+    const nativeFetch =
+      typeof window !== 'undefined' && (window as any).__component_preview_native_fetch__
+        ? (window as any).__component_preview_native_fetch__
+        : typeof fetch === 'function'
+        ? fetch
+        : null;
 
-    const resp = await fetch(fetchUrl);
+    if (!nativeFetch) return null;
+
+    const resp = await nativeFetch(fetchUrl, {
+      headers: { 'x-component-preview-internal': 'true' },
+    });
     if (!resp.ok) return null;
     const code = await resp.text();
 
@@ -437,7 +446,9 @@ export async function fetchSourceMapForUrl(url: string): Promise<RawSourceMap | 
       if (typeof window !== 'undefined' && !smUrl.startsWith('http://') && !smUrl.startsWith('https://')) {
         fullSmUrl = new URL(smUrl, window.location.href).toString();
       }
-      const smResp = await fetch(fullSmUrl);
+      const smResp = await nativeFetch(fullSmUrl, {
+        headers: { 'x-component-preview-internal': 'true' },
+      });
       if (smResp.ok) {
         rawMap = (await smResp.json()) as RawSourceMap;
       }

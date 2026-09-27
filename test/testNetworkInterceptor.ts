@@ -3,7 +3,7 @@ import { ActionLogItem } from '../preview-app/src/MockReduxProvider';
 
 // Mock browser window and XMLHttpRequest for Node test environment
 (global as any).window = global;
-(global as any).window.location = { href: 'http://127.0.0.1:4545/__preview__' };
+(global as any).window.location = { href: 'http://127.0.0.1:4545/__preview__', origin: 'http://127.0.0.1:4545' };
 
 class MockXHR {
   public static listeners: Record<string, Function[]> = {};
@@ -81,6 +81,12 @@ async function runTests() {
   console.log('Testing internal Vite request filtering ...');
   await (global as any).fetch('http://127.0.0.1:4545/@vite/client');
   await (global as any).fetch('http://127.0.0.1:4545/__preview_entry__.tsx');
+  await (global as any).fetch('http://127.0.0.1:4545/sample-workspace/CatGallery.tsx?t=1790460716871');
+  await (global as any).fetch('http://127.0.0.1:4545/src/Button.tsx');
+  await (global as any).fetch('http://127.0.0.1:4545/Button.module.scss');
+  await (global as any).fetch('https://api.example.com/internal-check', {
+    headers: { 'x-component-preview-internal': 'true' },
+  });
 
   // 5. Test XMLHttpRequest (Axios pattern)
   console.log('Testing XMLHttpRequest POST (Axios) ...');
