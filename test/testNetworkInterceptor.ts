@@ -1,4 +1,9 @@
-import { installNetworkInterceptor, subscribeToNetworkLogs } from '../preview-app/src/networkInterceptor';
+import {
+  installNetworkInterceptor,
+  subscribeToNetworkLogs,
+  generateCurlCommand,
+  generateFetchSnippet,
+} from '../preview-app/src/networkInterceptor';
 import { ActionLogItem } from '../preview-app/src/MockReduxProvider';
 
 // Mock browser window and XMLHttpRequest for Node test environment
@@ -15,6 +20,10 @@ class MockXHR {
   private eventListeners: Record<string, Function[]> = {};
 
   open(method: string, url: string) {}
+  setRequestHeader(name: string, value: string) {}
+  getAllResponseHeaders() {
+    return 'content-type: application/json\r\nx-powered-by: mock-xhr\r\n';
+  }
   send(body?: any) {
     setTimeout(() => {
       const handlers = this.eventListeners['loadend'] || [];
@@ -32,11 +41,16 @@ class MockXHR {
 // Mock window.fetch
 (global as any).fetch = async (input: any, init?: any) => {
   const url = typeof input === 'string' ? input : input.url;
+  const mockHeaders = new Map([
+    ['content-type', 'application/json'],
+    ['x-custom-header', 'mock-header-val'],
+  ]);
   if (url.includes('/api/error')) {
     return {
       status: 500,
       statusText: 'Internal Server Error',
       ok: false,
+      headers: mockHeaders,
       clone: () => ({
         text: async () => JSON.stringify({ message: 'Server crashed' }),
       }),
@@ -46,6 +60,7 @@ class MockXHR {
     status: 200,
     statusText: 'OK',
     ok: true,
+    headers: mockHeaders,
     clone: () => ({
       text: async () => JSON.stringify({ success: true, user: 'Samuel' }),
     }),
@@ -99,32 +114,66 @@ async function runTests() {
 
   unsubscribe();
 
-  console.log(`Total intercepted HTTP requests: ${loggedItems.length}`);
+  console.log(`Total intercepted HTTP events: ${loggedItems.length}`);
 
-  // Assertions
-  if (loggedItems.length !== 4) {
-    console.error(`Expected 4 intercepted requests, got ${loggedItems.length}`);
+  // Test pending in-flight emissions and completed emissions
+  const pendingLogs = loggedItems.filter((i) => i.isPending === true);
+  const completedLogs = loggedItems.filter((i) => i.isPending === false);
+
+  console.log(`Pending in-flight logs: ${pendingLogs.length}, Completed logs: ${completedLogs.length}`);
+
+  if (pendingLogs.length !== 4) {
+    console.error(`Expected 4 pending requests, got ${pendingLogs.length}`);
     process.exit(1);
+  }
+
+  if (completedLogs.length !== 4) {
+    console.error(`Expected 4 completed requests, got ${completedLogs.length}`);
+    process.exit(1);
+  }
+
+  // Verify all completed requests share an ID with a pending request
+  for (const completed of completedLogs) {
+    const hasPendingMatch = pendingLogs.some((p) => p.id === completed.id);
+    if (!hasPendingMatch) {
+      console.error(`Completed request ${completed.id} did not match any pending request id`);
+      process.exit(1);
+    }
   }
 
   // Verify Item 1: Fetch GET
-  const getReq = loggedItems[0];
+  const getReq = completedLogs.find((l) => l.url?.includes('/api/users'))!;
   console.log('- [1] Fetch GET verified:', getReq.method, getReq.url, getReq.status, getReq.response);
-  if (getReq.method !== 'GET' || getReq.status !== 200 || !getReq.response.success) {
+  if (getReq.method !== 'GET' || getReq.status !== 200 || !getReq.response?.success) {
     console.error('Fetch GET assertion failed!');
     process.exit(1);
   }
+  if (!getReq.responseHeaders || !getReq.responseHeaders['content-type']) {
+    console.error('Fetch GET missing responseHeaders!');
+    process.exit(1);
+  }
 
-  // Verify Item 2: Fetch POST with payload
-  const postReq = loggedItems[1];
+  // Verify Item 2: Fetch POST with payload + cURL & fetch generator
+  const postReq = completedLogs.find((l) => l.url?.includes('/api/orders'))!;
   console.log('- [2] Fetch POST verified:', postReq.method, postReq.payload, postReq.status);
   if (postReq.method !== 'POST' || postReq.payload?.item !== 'Laptop') {
     console.error('Fetch POST payload assertion failed!');
     process.exit(1);
   }
+  const curlCmd = generateCurlCommand(postReq);
+  if (!curlCmd.includes('-X POST') || !curlCmd.includes('Laptop')) {
+    console.error('cURL snippet generator failed:', curlCmd);
+    process.exit(1);
+  }
+  const fetchSnip = generateFetchSnippet(postReq);
+  if (!fetchSnip.includes('POST') || !fetchSnip.includes('Laptop')) {
+    console.error('Fetch snippet generator failed:', fetchSnip);
+    process.exit(1);
+  }
+  console.log('   cURL command generated:', curlCmd);
 
   // Verify Item 3: Fetch 500 error
-  const errReq = loggedItems[2];
+  const errReq = completedLogs.find((l) => l.url?.includes('/api/error'))!;
   console.log('- [3] Fetch Error verified:', errReq.method, errReq.status, errReq.level);
   if (errReq.status !== 500 || errReq.level !== 'error') {
     console.error('Fetch error assertion failed!');
@@ -132,14 +181,18 @@ async function runTests() {
   }
 
   // Verify Item 4: Axios XHR
-  const xhrReq = loggedItems[3];
+  const xhrReq = completedLogs.find((l) => l.url?.includes('/axios/auth'))!;
   console.log('- [4] Axios XHR verified:', xhrReq.method, xhrReq.url, xhrReq.payload, xhrReq.response);
   if (xhrReq.method !== 'POST' || xhrReq.payload?.username !== 'stenen' || xhrReq.response?.data !== 'axios-success') {
     console.error('Axios XHR assertion failed!');
     process.exit(1);
   }
+  if (!xhrReq.responseHeaders || !xhrReq.responseHeaders['x-powered-by']) {
+    console.error('Axios XHR missing responseHeaders!');
+    process.exit(1);
+  }
 
-  console.log('\n✅ All Network Interceptor tests passed successfully!');
+  console.log('\n✅ All Network Interceptor tests (pending, completed, headers, cURL) passed successfully!');
 }
 
 runTests().catch((err) => {

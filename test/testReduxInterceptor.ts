@@ -6,6 +6,12 @@ import {
   getChangedSliceNames,
   sanitizePayload,
   getLiveStoreState,
+  computeSliceDiff,
+  isRtkQuerySliceState,
+  replayAction,
+  dispatchCustomAction,
+  getKnownActionTypes,
+  getKnownSliceNames,
 } from '../preview-app/src/reduxInterceptor';
 import { ActionLogItem } from '../preview-app/src/MockReduxProvider';
 
@@ -14,6 +20,10 @@ console.log('--- Testing Redux Action Filtering ---');
 if (!isInternalReduxAction('@@redux/INIT123')) throw new Error('Failed to filter @@redux/INIT');
 if (!isInternalReduxAction('api/subscriptions/internal_getRTKQSubscriptions'))
   throw new Error('Failed to filter RTKQ internal subscriptions');
+if (!isInternalReduxAction('catApi/subscriptions/unsubscribeQueryResult'))
+  throw new Error('Failed to filter RTKQ unsubscribeQueryResult action');
+if (!isInternalReduxAction('catApi/subscriptions/subscribeQueryResult'))
+  throw new Error('Failed to filter RTKQ subscribeQueryResult action');
 if (!isInternalReduxAction('api/config/middlewareRegistered'))
   throw new Error('Failed to filter middlewareRegistered');
 if (isInternalReduxAction('catGallery/setSelectedTag'))
@@ -221,9 +231,120 @@ async function testCreateAsyncThunk() {
   console.log('✅ createAsyncThunk lifecycle passed:', pending.name, '->', fulfilled.name);
 }
 
+// 6. Test State Diff Computation, Replay, and Custom Dispatch
+function testStateDiffAndReplay() {
+  console.log('--- Testing State Diff, Action Replay & Manual Dispatch ---');
+
+  // 1. Test computeSliceDiff
+  const prevSlice = { count: 5, user: 'Samuel', tags: ['red'] };
+  const nextSlice = { count: 10, user: 'Samuel', role: 'admin' };
+  const sliceDiff = computeSliceDiff(prevSlice, nextSlice);
+
+  if (!sliceDiff) throw new Error('Expected sliceDiff to be computed');
+  if (sliceDiff.updated?.count?.before !== 5 || sliceDiff.updated?.count?.after !== 10) {
+    throw new Error(`Updated diff mismatch: ${JSON.stringify(sliceDiff.updated)}`);
+  }
+  if (sliceDiff.added?.role !== 'admin') {
+    throw new Error(`Added diff mismatch: ${JSON.stringify(sliceDiff.added)}`);
+  }
+  if (!sliceDiff.deleted?.includes('tags')) {
+    throw new Error(`Deleted diff mismatch: ${JSON.stringify(sliceDiff.deleted)}`);
+  }
+  console.log('✅ computeSliceDiff correctly detected added, updated, and deleted keys');
+
+  // Test computeSliceDiff on RTK Query slice state
+  const prevRtkSlice = {
+    queries: {
+      'getCat({"tag":"tabby"})': {
+        status: 'fulfilled',
+        endpointName: 'getCat',
+        data: { id: 'cat-1' },
+      },
+      'getCat({"tag":"black"})': {
+        status: 'pending',
+        endpointName: 'getCat',
+        originalArgs: { tag: 'black' },
+      },
+    },
+    provided: { tags: { Cat: ['getCat({"tag":"tabby"})'] } },
+    subscriptions: { 'getCat({"tag":"tabby"})': 1 },
+    config: { online: true },
+  };
+
+  const nextRtkSlice = {
+    queries: {
+      'getCat({"tag":"tabby"})': prevRtkSlice.queries['getCat({"tag":"tabby"})'], // Unchanged cached query!
+      'getCat({"tag":"black"})': {
+        status: 'fulfilled',
+        endpointName: 'getCat',
+        originalArgs: { tag: 'black' },
+        data: { id: 'cat-2', url: 'https://cataas.com/cat/cat-2' },
+      },
+    },
+    provided: { tags: { Cat: ['getCat({"tag":"tabby"})', 'getCat({"tag":"black"})'] } }, // internal tag update
+    subscriptions: { 'getCat({"tag":"tabby"})': 1, 'getCat({"tag":"black"})': 1 },
+    config: { online: true },
+  };
+
+  if (!isRtkQuerySliceState(prevRtkSlice)) throw new Error('Failed isRtkQuerySliceState check');
+  if (isRtkQuerySliceState(prevSlice)) throw new Error('False positive on isRtkQuerySliceState');
+
+  const rtkDiff = computeSliceDiff(prevRtkSlice, nextRtkSlice);
+  if (!rtkDiff) throw new Error('Expected rtkDiff to be computed');
+
+  // Verify internal tags/subscriptions/config were omitted
+  if ('provided' in rtkDiff.updated || 'subscriptions' in rtkDiff.updated || 'config' in rtkDiff.updated) {
+    throw new Error(`Internal plumbing should not be in updated: ${JSON.stringify(rtkDiff.updated)}`);
+  }
+
+  // Verify unchanged cached query is NOT in diff
+  if (Object.keys(rtkDiff.updated).some((k) => k.includes('tabby'))) {
+    throw new Error('Unchanged query "tabby" should not be in diff');
+  }
+
+  // Verify updated status and data for the query that completed
+  if (rtkDiff.updated['query: getCat · status']?.before !== 'pending' || rtkDiff.updated['query: getCat · status']?.after !== 'fulfilled') {
+    throw new Error(`Expected query status transition pending -> fulfilled, got ${JSON.stringify(rtkDiff.updated)}`);
+  }
+  if (!rtkDiff.updated['query: getCat · data']?.after?.id) {
+    throw new Error(`Expected query data in diff, got ${JSON.stringify(rtkDiff.updated)}`);
+  }
+  console.log('✅ RTK Query specialized slice diff verified (omitted internal tags, diffed only changed query)');
+
+  // 2. Test replayAction
+  const sampleLog: ActionLogItem = {
+    id: 'test-counter-log',
+    name: 'counter/increment',
+    source: 'redux',
+    rawAction: { type: 'counter/increment', payload: 10 },
+    timestamp: '12:00:00',
+  };
+  const replaySuccess = replayAction(sampleLog);
+  if (!replaySuccess) throw new Error('replayAction returned false');
+  const storeStateAfterReplay = getLiveStoreState();
+  console.log('✅ replayAction executed successfully, state:', storeStateAfterReplay);
+
+  // 3. Test dispatchCustomAction
+  const customSuccess = dispatchCustomAction({ type: 'counter/increment', payload: 25 });
+  if (!customSuccess) throw new Error('dispatchCustomAction returned false');
+  console.log('✅ dispatchCustomAction executed successfully');
+
+  // 4. Test introspection
+  const knownTypes = getKnownActionTypes();
+  const knownSlices = getKnownSliceNames();
+  if (!knownTypes.includes('counter/increment')) {
+    throw new Error(`Expected knownTypes to include 'counter/increment', got ${JSON.stringify(knownTypes)}`);
+  }
+  if (!knownSlices.includes('counter')) {
+    throw new Error(`Expected knownSlices to include 'counter', got ${JSON.stringify(knownSlices)}`);
+  }
+  console.log('✅ getKnownActionTypes and getKnownSliceNames verified:', knownTypes, knownSlices);
+}
+
 async function run() {
   await testRtkQueryInterception();
   await testCreateAsyncThunk();
+  testStateDiffAndReplay();
   console.log('\n🎉 ALL REDUX INTERCEPTOR TESTS PASSED SUCCESSFULLY!');
 }
 

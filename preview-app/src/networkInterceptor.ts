@@ -131,12 +131,75 @@ function parsePayload(body: any): any {
   return String(body);
 }
 
-function notifySubscribers(item: ActionLogItem) {
+export function parseHeaders(headers: any): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!headers) return result;
+  try {
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((val: any, key: any) => {
+        if (key) result[String(key).toLowerCase()] = String(val ?? '');
+      });
+    } else if (Array.isArray(headers)) {
+      headers.forEach(([k, v]) => {
+        if (k) result[String(k).toLowerCase()] = String(v ?? '');
+      });
+    } else if (typeof headers === 'object') {
+      Object.keys(headers).forEach((k) => {
+        result[k.toLowerCase()] = String(headers[k] ?? '');
+      });
+    }
+  } catch {}
+  return result;
+}
+
+export function parseRawResponseHeaders(raw?: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!raw) return headers;
+  const lines = raw.trim().split(/[\r\n]+/);
+  for (const line of lines) {
+    const parts = line.split(': ');
+    const key = parts.shift();
+    const val = parts.join(': ');
+    if (key) headers[key.trim()] = val.trim();
+  }
+  return headers;
+}
+
+export function generateCurlCommand(log: ActionLogItem): string {
+  const method = log.method || 'GET';
+  const parts: string[] = [`curl -X ${method} '${log.url || ''}'`];
+  if (log.requestHeaders && Object.keys(log.requestHeaders).length > 0) {
+    for (const [key, value] of Object.entries(log.requestHeaders)) {
+      parts.push(`  -H '${key}: ${String(value).replace(/'/g, "\\'")}'`);
+    }
+  }
+  if (log.payload !== undefined && method !== 'GET' && method !== 'HEAD') {
+    const bodyStr = typeof log.payload === 'object' ? JSON.stringify(log.payload) : String(log.payload);
+    parts.push(`  -d '${bodyStr.replace(/'/g, "\\'")}'`);
+  }
+  return parts.join(' \\\n');
+}
+
+export function generateFetchSnippet(log: ActionLogItem): string {
+  const method = log.method || 'GET';
+  const opts: Record<string, any> = { method };
+  if (log.requestHeaders && Object.keys(log.requestHeaders).length > 0) {
+    opts.headers = log.requestHeaders;
+  }
+  if (log.payload !== undefined && method !== 'GET' && method !== 'HEAD') {
+    opts.body = typeof log.payload === 'object' ? JSON.stringify(log.payload, null, 2) : log.payload;
+  }
+  return `fetch('${log.url || ''}', ${JSON.stringify(opts, null, 2)});`;
+}
+
+function notifySubscribers(item: ActionLogItem, forwardToHost = true) {
   getNetworkSubscribers().forEach((sub) => {
     try {
       sub(item);
     } catch {}
   });
+
+  if (!forwardToHost) return;
 
   // Forward to VS Code output channel
   try {
@@ -184,13 +247,35 @@ export function installNetworkInterceptor(): void {
 
       const method = (init?.method || (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET')).toUpperCase();
       const payload = parsePayload(init?.body);
+      const reqHeaders = parseHeaders(init?.headers || (typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined));
       const startTime = performance.now();
       const timestamp = new Date().toLocaleTimeString();
       const id = Math.random().toString(36).substring(2, 9);
 
+      // Immediately emit in-flight pending log
+      const pendingLog: ActionLogItem = {
+        id,
+        source: 'network',
+        isPending: true,
+        name: `${method} ${rawUrl}`,
+        method,
+        url: rawUrl,
+        payload,
+        requestHeaders: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
+        timestamp,
+      };
+      notifySubscribers(pendingLog, false);
+
       try {
         const response = await originalFetch(input, init);
         const duration = `${Math.round(performance.now() - startTime)}ms`;
+
+        let resHeaders: Record<string, string> | undefined;
+        try {
+          if (response.headers) {
+            resHeaders = parseHeaders(response.headers);
+          }
+        } catch {}
 
         // Clone response to inspect body without consuming the original stream
         let responseBody: any;
@@ -206,38 +291,43 @@ export function installNetworkInterceptor(): void {
         const logItem: ActionLogItem = {
           id,
           source: 'network',
+          isPending: false,
           level: isSuccess ? 'info' : 'error',
           name: `${method} ${rawUrl}`,
           method,
           url: rawUrl,
           payload,
           response: responseBody,
+          requestHeaders: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
+          responseHeaders: resHeaders && Object.keys(resHeaders).length > 0 ? resHeaders : undefined,
           status: response.status,
           statusText: response.statusText,
           duration,
           timestamp,
         };
 
-        notifySubscribers(logItem);
+        notifySubscribers(logItem, true);
         return response;
       } catch (err: any) {
         const duration = `${Math.round(performance.now() - startTime)}ms`;
         const logItem: ActionLogItem = {
           id,
           source: 'network',
+          isPending: false,
           level: 'error',
           name: `${method} ${rawUrl}`,
           method,
           url: rawUrl,
           payload,
           response: { error: err?.message || 'Network Request Failed' },
+          requestHeaders: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
           status: 0,
           statusText: 'Failed',
           duration,
           timestamp,
         };
 
-        notifySubscribers(logItem);
+        notifySubscribers(logItem, true);
         throw err;
       }
     };
@@ -247,6 +337,15 @@ export function installNetworkInterceptor(): void {
   if (typeof window.XMLHttpRequest === 'function') {
     const originalOpen = XMLHttpRequest.prototype.open;
     const originalSend = XMLHttpRequest.prototype.send;
+    const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+    XMLHttpRequest.prototype.setRequestHeader = function (header: string, value: string): void {
+      if (!(this as any).__preview_req_headers) {
+        (this as any).__preview_req_headers = {};
+      }
+      (this as any).__preview_req_headers[header] = value;
+      return originalSetRequestHeader.apply(this, arguments as any);
+    };
 
     XMLHttpRequest.prototype.open = function (
       method: string,
@@ -255,6 +354,7 @@ export function installNetworkInterceptor(): void {
     ): void {
       (this as any).__preview_method = (method || 'GET').toUpperCase();
       (this as any).__preview_url = String(url);
+      (this as any).__preview_req_headers = {};
       return (originalOpen as any).apply(this, [method, url, ...rest]);
     };
 
@@ -270,6 +370,21 @@ export function installNetworkInterceptor(): void {
       const timestamp = new Date().toLocaleTimeString();
       const id = Math.random().toString(36).substring(2, 9);
       const payload = parsePayload(body);
+      const reqHeaders = (this as any).__preview_req_headers || {};
+
+      // Immediately emit in-flight pending log
+      const pendingLog: ActionLogItem = {
+        id,
+        source: 'network',
+        isPending: true,
+        name: `${method} ${url}`,
+        method,
+        url,
+        payload,
+        requestHeaders: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
+        timestamp,
+      };
+      notifySubscribers(pendingLog, false);
 
       const onComplete = () => {
         const duration = `${Math.round(performance.now() - startTime)}ms`;
@@ -287,25 +402,34 @@ export function installNetworkInterceptor(): void {
           responseBody = this.response || '[Error reading response]';
         }
 
+        let resHeaders: Record<string, string> | undefined;
+        try {
+          const raw = this.getAllResponseHeaders();
+          resHeaders = parseRawResponseHeaders(raw);
+        } catch {}
+
         const status = this.status;
         const isSuccess = status >= 200 && status < 400;
 
         const logItem: ActionLogItem = {
           id,
           source: 'network',
+          isPending: false,
           level: isSuccess ? 'info' : 'error',
           name: `${method} ${url}`,
           method,
           url,
           payload,
           response: responseBody,
+          requestHeaders: Object.keys(reqHeaders).length > 0 ? reqHeaders : undefined,
+          responseHeaders: resHeaders && Object.keys(resHeaders).length > 0 ? resHeaders : undefined,
           status,
           statusText: this.statusText || (status === 200 ? 'OK' : ''),
           duration,
           timestamp,
         };
 
-        notifySubscribers(logItem);
+        notifySubscribers(logItem, true);
       };
 
       this.addEventListener('loadend', onComplete, { once: true });

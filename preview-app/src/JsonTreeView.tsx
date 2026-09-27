@@ -6,6 +6,7 @@ interface JsonTreeViewProps {
   initialExpandedDepth?: number;
   searchQuery?: string;
   maxInitialStringLength?: number;
+  showControls?: boolean;
 }
 
 interface JsonNodeProps {
@@ -265,24 +266,51 @@ const JsonNode: React.FC<JsonNodeProps> = ({
   );
 };
 
+
 export const JsonTreeView: React.FC<JsonTreeViewProps> = ({
   data,
   initialExpandedDepth = 1,
   searchQuery = '',
+  showControls = false,
 }) => {
   if (data === undefined) {
     return <span className="json-undefined">undefined</span>;
   }
 
+  const [expandedDepth, setExpandedDepth] = useState<number>(initialExpandedDepth);
+  const [treeKey, setTreeKey] = useState<number>(0);
+
+  const handleExpandAll = useCallback(() => {
+    setExpandedDepth(20);
+    setTreeKey((k) => k + 1);
+  }, []);
+
+  const handleCollapseAll = useCallback(() => {
+    setExpandedDepth(0);
+    setTreeKey((k) => k + 1);
+  }, []);
+
   return (
-    <div className="json-tree">
-      <JsonNode
-        value={data}
-        depth={0}
-        initialExpandedDepth={initialExpandedDepth}
-        searchQuery={searchQuery}
-        isLast={true}
-      />
+    <div className="json-tree-container">
+      {showControls && typeof data === 'object' && data !== null && (
+        <div className="json-tree-controls">
+          <button className="json-ctrl-btn" onClick={handleExpandAll} title="Expand all nodes">
+            Expand All
+          </button>
+          <button className="json-ctrl-btn" onClick={handleCollapseAll} title="Collapse all nodes">
+            Collapse All
+          </button>
+        </div>
+      )}
+      <div className="json-tree" key={treeKey}>
+        <JsonNode
+          value={data}
+          depth={0}
+          initialExpandedDepth={expandedDepth}
+          searchQuery={searchQuery}
+          isLast={true}
+        />
+      </div>
     </div>
   );
 };

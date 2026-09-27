@@ -93,12 +93,36 @@ export const Harness: React.FC<HarnessProps> = ({
   const [runtimeErrors, setRuntimeErrors] = useState<RuntimeErrorItem[]>([]);
   const [variants, setVariants] = useState<PreviewVariantData[]>(initialVariants);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
-  const [actionLogs, setActionLogs] = useState<ActionLogItem[]>([]);
+  const [actionLogs, setActionLogs] = useState<ActionLogItem[]>(() => {
+    try {
+      const preserve = localStorage.getItem('component-preview-preserve-log') === 'true';
+      if (preserve) {
+        const saved = sessionStorage.getItem('component-preview-persisted-logs');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      }
+    } catch {}
+    return [];
+  });
   const [isLocked, setIsLocked] = useState(initialIsLocked);
   const [allComponents, setAllComponents] = useState<string[]>(initialAllComponents);
   const [viewportMode, setViewportMode] = useState<ViewportMode>('responsive');
   const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>('dark');
   const [remountCount, setRemountCount] = useState<number>(0);
+
+  // Sync actionLogs to sessionStorage when preserveLog is active
+  useEffect(() => {
+    try {
+      const preserve = localStorage.getItem('component-preview-preserve-log') === 'true';
+      if (preserve) {
+        sessionStorage.setItem('component-preview-persisted-logs', JSON.stringify(actionLogs.slice(0, 100)));
+      } else {
+        sessionStorage.removeItem('component-preview-persisted-logs');
+      }
+    } catch {}
+  }, [actionLogs]);
 
   useEffect(() => {
     setActiveSourceFile(currentFilePath);
@@ -243,7 +267,12 @@ export const Harness: React.FC<HarnessProps> = ({
 
   const addActionLog = useCallback((item: ActionLogItem) => {
     setActionLogs((prev) => {
-      if (prev.some((p) => p.id === item.id)) return prev;
+      const existingIdx = prev.findIndex((p) => p.id === item.id);
+      if (existingIdx !== -1) {
+        const updated = [...prev];
+        updated[existingIdx] = item;
+        return updated;
+      }
       return [item, ...prev.slice(0, 299)];
     });
   }, []);
@@ -305,6 +334,9 @@ export const Harness: React.FC<HarnessProps> = ({
 
   const clearActionLogs = useCallback(() => {
     setActionLogs([]);
+    try {
+      sessionStorage.removeItem('component-preview-persisted-logs');
+    } catch {}
   }, []);
 
   const activeVariant = useMemo(() => {
@@ -331,6 +363,13 @@ export const Harness: React.FC<HarnessProps> = ({
   const preparedProps = useMemo(() => {
     return prepareProps(activeVariant.props, userModule, addActionLog);
   }, [activeVariant.props, userModule, addActionLog]);
+
+  useEffect(() => {
+    try {
+      (window as any).__preview_current_props__ = preparedProps;
+      (window as any).__preview_component_name__ = componentName;
+    } catch {}
+  }, [preparedProps, componentName]);
 
   // Determine effective component to render (supports switching via dropdown)
   const CurrentComponent = useMemo(() => {

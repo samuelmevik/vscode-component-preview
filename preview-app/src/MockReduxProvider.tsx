@@ -19,11 +19,23 @@ export interface ActionLogItem {
   url?: string;
   timestamp: string;
   location?: ErrorLocation;
+  // Network metadata
+  isPending?: boolean;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
   // Redux metadata
   asyncStatus?: 'pending' | 'fulfilled' | 'rejected';
   endpoint?: string;
   queryArgs?: any;
+  queryType?: 'query' | 'mutation';
+  queryError?: any;
   changedSlices?: string[];
+  stateDiff?: Record<string, any>;
+  rawAction?: any;
+  // Console metadata
+  tableData?: any;
+  // UI metadata
+  pinned?: boolean;
 }
 
 interface MockReduxProviderProps {
