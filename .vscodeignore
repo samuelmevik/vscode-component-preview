@@ -1,7 +1,6 @@
 .vscode/**
 src/**
 sample-workspace/**
-preview-app/**
 test/**
 tsconfig.json
 esbuild.config.js
