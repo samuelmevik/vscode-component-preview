@@ -243,7 +243,64 @@ export class PreviewManager {
     }
   }
 
+  public isIntegratedBrowserTabOpen(): boolean {
+    try {
+      const tabGroups = vscode.window?.tabGroups?.all || [];
+      const port = this.viteServer.getPort();
+      for (const group of tabGroups) {
+        for (const tab of group.tabs || []) {
+          const label = tab.label || '';
+          if (
+            label.includes('Preview:') ||
+            label.includes('Component Preview') ||
+            (port && label.includes(String(port))) ||
+            label.includes('__preview__') ||
+            label.includes('Simple Browser') ||
+            label.includes('Integrated Browser')
+          ) {
+            return true;
+          }
+          const input = tab.input as any;
+          if (input) {
+            if (input.uri && (String(input.uri).includes('/__preview__') || (port && String(input.uri).includes(String(port))))) {
+              return true;
+            }
+            if (input.viewType && (input.viewType.includes('browser') || input.viewType.includes('simpleBrowser'))) {
+              return true;
+            }
+          }
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  public async closeExistingPreviewTabs(): Promise<void> {
+    try {
+      const tabGroups = vscode.window?.tabGroups?.all || [];
+      const port = this.viteServer.getPort();
+      for (const group of tabGroups) {
+        for (const tab of group.tabs || []) {
+          const label = tab.label || '';
+          if (
+            label.includes('Preview:') ||
+            label.includes('Component Preview') ||
+            (port && label.includes(String(port))) ||
+            label.includes('__preview__')
+          ) {
+            await vscode.window.tabGroups.close(tab);
+          }
+        }
+      }
+    } catch {}
+  }
+
   public async openIntegratedBrowserTab(url: string, viewColumn = vscode.ViewColumn.Beside): Promise<boolean> {
+    if (this.isIntegratedBrowserTabOpen()) {
+      this.outputChannel.appendLine('[Preview] Integrated browser tab is already open. Reusing existing tab.');
+      return true;
+    }
+
     const uri = vscode.Uri.parse(url);
 
     // 1. Try VS Code 1.112+ native integrated browser command
@@ -300,7 +357,11 @@ export class PreviewManager {
     await this.updatePreviewForEditor(targetEditor);
 
     const previewUrl = this.viteServer.getPreviewUrl();
-    await this.openIntegratedBrowserTab(previewUrl);
+    if (!this.isIntegratedBrowserTabOpen()) {
+      await this.openIntegratedBrowserTab(previewUrl);
+    } else {
+      this.outputChannel.appendLine('[Preview] Reusing existing integrated browser tab. Content hot-swapped via Vite HMR.');
+    }
 
     const config = vscode.workspace.getConfiguration('componentPreview');
     const lockGroup = config.get<boolean>('lockEditorGroup', true);
@@ -698,11 +759,13 @@ export class PreviewManager {
     const port = await this.startServer(editor);
     if (!port) return;
 
+    this.isPreviewActive = true;
+
     if (componentName) {
       const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
       const target = scanResult.components.find((c) => c.name === componentName);
       if (target) {
-        if (!this.isPreviewActive) {
+        if (!this.isIntegratedBrowserTabOpen()) {
           await this.showPreview(editor);
         }
         const allComponentNames = scanResult.components.map((c) => c.name);
@@ -711,7 +774,9 @@ export class PreviewManager {
       }
     }
 
-    await this.showPreview(editor);
+    if (!this.isIntegratedBrowserTabOpen()) {
+      await this.showPreview(editor);
+    }
   }
 
   public resolveDebugBrowserType(overridePref?: string): DebugBrowserType {
@@ -811,6 +876,10 @@ export class PreviewManager {
     this.outputChannel.appendLine(`[Debug] webRoot: ${webRoot}`);
 
     try {
+      if (primaryBrowser === 'editor-browser' && !this.currentDebugSession) {
+        await this.closeExistingPreviewTabs();
+      }
+
       let started = await vscode.debug.startDebugging(workspaceFolder, debugConfig);
       if (!started) {
         this.outputChannel.appendLine(`[Debug] Primary launch with ${primaryBrowser} was not accepted. Trying fallback: ${fallbackBrowser}...`);
