@@ -75,6 +75,7 @@ export function getWebviewContent(previewUrl: string, componentName: string): st
   <iframe 
     id="preview-iframe"
     src="${previewUrl}" 
+    allow="clipboard-read; clipboard-write"
     onload="document.getElementById('loading-overlay').style.display='none'"
   ></iframe>
   <script>
@@ -104,6 +105,13 @@ export function getWebviewContent(previewUrl: string, componentName: string): st
     // Forward messages from iframe (Harness) to VS Code extension host
     window.addEventListener('message', (event) => {
       if (event.data && typeof event.data === 'object' && event.data.type) {
+        if (event.data.type === 'COPY_TO_CLIPBOARD' && event.data.payload && typeof event.data.payload.text === 'string') {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(event.data.payload.text).catch(() => {});
+            }
+          } catch (e) {}
+        }
         vscode.postMessage(event.data);
       }
     });

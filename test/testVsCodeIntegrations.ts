@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
 import { scanComponents } from '../src/parser/astScanner';
+import { getWebviewContent } from '../src/webviewHtml';
+import { copyToClipboard } from '../preview-app/src/clipboardUtils';
 
 function testCodeLensLogic() {
   console.log('--- Testing CodeLens Provider Logic ---');
@@ -85,8 +87,97 @@ function testDiagnosticsLocationLogic() {
   console.log('✅ Diagnostic range calculation verified for exact line and column');
 }
 
+async function testClipboardIntegration() {
+  console.log('\n--- Testing Clipboard Permissions Policy & Fallback Logic ---');
+
+  // 1. Verify iframe has allow="clipboard-read; clipboard-write" in webviewHtml
+  const html = getWebviewContent('http://127.0.0.1:4545', 'TestComp');
+  assert.ok(
+    html.includes('allow="clipboard-read; clipboard-write"'),
+    'Webview iframe must declare allow="clipboard-read; clipboard-write" to prevent crbug.com/414348233'
+  );
+  assert.ok(
+    html.includes("event.data.type === 'COPY_TO_CLIPBOARD'"),
+    'Webview script must intercept and handle COPY_TO_CLIPBOARD'
+  );
+  console.log('✅ Webview HTML iframe permissions policy and message delegation verified');
+
+  // 2. Test copyToClipboard when Navigator Clipboard API throws Permissions Policy error
+  const originalNavigatorDesc = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const originalWindow = (global as any).window;
+
+  let postMessagePayload: any = null;
+  const mockParent = {
+    postMessage: (data: any) => {
+      postMessagePayload = data;
+    },
+  };
+
+  const mockWindow: any = {
+    parent: mockParent,
+  };
+  mockWindow.window = mockWindow;
+
+  (global as any).window = mockWindow;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      clipboard: {
+        writeText: async () => {
+          const err = new Error(
+            "Failed to execute 'writeText' on 'Clipboard': The Clipboard API has been blocked because of a permissions policy applied to the current document."
+          );
+          err.name = 'NotAllowedError';
+          throw err;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+
+  // Must not throw an unhandled error and must route through parent postMessage bridge
+  const copyResult = await copyToClipboard('{"foo": "bar"}');
+  assert.strictEqual(copyResult, true, 'copyToClipboard should succeed via parent window fallback');
+  assert.deepStrictEqual(
+    postMessagePayload,
+    {
+      type: 'COPY_TO_CLIPBOARD',
+      payload: { text: '{"foo": "bar"}' },
+    },
+    'Should dispatch COPY_TO_CLIPBOARD message to parent window'
+  );
+  console.log('✅ Permissions Policy NotAllowedError caught gracefully and bridged to VS Code host');
+
+  // 3. Test copyToClipboard when Navigator Clipboard succeeds
+  let directCopiedText = '';
+  Object.defineProperty(globalThis, 'navigator', {
+    value: {
+      clipboard: {
+        writeText: async (t: string) => {
+          directCopiedText = t;
+        },
+      },
+    },
+    configurable: true,
+    writable: true,
+  });
+  (global as any).window = undefined; // browser top-level context
+
+  const directResult = await copyToClipboard('test 123');
+  assert.strictEqual(directResult, true);
+  assert.strictEqual(directCopiedText, 'test 123');
+  console.log('✅ Direct Navigator Clipboard writeText verified');
+
+  // Restore globals
+  if (originalNavigatorDesc) {
+    Object.defineProperty(globalThis, 'navigator', originalNavigatorDesc);
+  }
+  (global as any).window = originalWindow;
+}
+
 testCodeLensLogic();
 testThemeSyncLogic();
 testDiagnosticsLocationLogic();
-
-console.log('\n🎉 ALL DEEPER VS CODE INTEGRATION TESTS PASSED SUCCESSFULLY!');
+testClipboardIntegration().then(() => {
+  console.log('\n🎉 ALL DEEPER VS CODE INTEGRATION TESTS PASSED SUCCESSFULLY!');
+});

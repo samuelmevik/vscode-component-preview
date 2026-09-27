@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { ChevronRight, Copy, Check } from 'lucide-react';
+import { copyToClipboard } from './clipboardUtils';
 
 interface JsonTreeViewProps {
   data: any;
@@ -128,7 +129,7 @@ const JsonNode: React.FC<JsonNodeProps> = ({
     (e: React.MouseEvent) => {
       e.stopPropagation();
       const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
-      navigator.clipboard?.writeText(text);
+      copyToClipboard(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     },

@@ -31,6 +31,7 @@ import {
 import { ActionLogItem } from './MockReduxProvider';
 import { navigateToSource } from './errorLocationParser';
 import { JsonTreeView, highlightMatch } from './JsonTreeView';
+import { copyToClipboard } from './clipboardUtils';
 import {
   getLiveStoreState,
   replayAction,
@@ -1523,7 +1524,7 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   }, [groupedLogs, sortOrder]);
 
   const handleCopyLog = useCallback((id: string, text: string) => {
-    navigator.clipboard?.writeText(text);
+    copyToClipboard(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 1200);
   }, []);
@@ -1542,7 +1543,7 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
       location: item.location ? `${item.location.fileName}:${item.location.line}` : undefined,
       timestamp: item.timestamp,
     }));
-    navigator.clipboard?.writeText(JSON.stringify(exportData, null, 2));
+    copyToClipboard(JSON.stringify(exportData, null, 2));
     setCopiedAll(true);
     setTimeout(() => setCopiedAll(false), 1500);
   }, [filteredLogs]);
@@ -1928,7 +1929,7 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
                     className="toolbar-icon-btn"
                     onClick={() => {
                       const state = getLiveStoreState();
-                      navigator.clipboard?.writeText(JSON.stringify(state, null, 2));
+                      copyToClipboard(JSON.stringify(state, null, 2));
                     }}
                     title="Copy full live store state as JSON"
                   >

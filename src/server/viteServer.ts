@@ -293,6 +293,7 @@ export class PreviewViteServer {
   public onRuntimeError?: (error: RuntimeErrorPayload) => void;
   public onRuntimeErrorUpdate?: (data: { id?: string; location: any }) => void;
   public onConsoleLog?: (log: { level: string; text: string; timestamp?: string }) => void;
+  public onCopyToClipboard?: (text: string) => Promise<void> | void;
 
   constructor(extensionPath: string, port = 4545) {
     this.extensionPath = extensionPath;
@@ -385,6 +386,22 @@ export class PreviewViteServer {
             if (this.onStopRequested) {
               setTimeout(() => this.onStopRequested?.(), 50);
             }
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/copy') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', async () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (typeof data.text === 'string' && this.onCopyToClipboard) {
+                  await this.onCopyToClipboard(data.text);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
             return;
           }
 

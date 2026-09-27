@@ -85,6 +85,14 @@ export class PreviewManager {
       this.outputChannel.appendLine(`[Console ${log.timestamp || ''}] ${levelTag} ${log.text}`);
     };
 
+    this.viteServer.onCopyToClipboard = async (text: string) => {
+      try {
+        await vscode.env.clipboard.writeText(text);
+      } catch (err) {
+        this.outputChannel.appendLine(`[Preview] Failed to copy to clipboard: ${err}`);
+      }
+    };
+
     vscode.workspace.onDidChangeConfiguration(
       (e) => {
         if (e.affectsConfiguration('componentPreview.port')) {
@@ -316,6 +324,15 @@ export class PreviewManager {
           const { filePath, line, column, originalResolved } = message.payload || {};
           if (filePath) {
             await this.navigateToSource(filePath, line, column, originalResolved);
+          }
+        } else if (message.type === 'COPY_TO_CLIPBOARD') {
+          const text = message.payload?.text;
+          if (typeof text === 'string') {
+            try {
+              await vscode.env.clipboard.writeText(text);
+            } catch (err) {
+              this.outputChannel.appendLine(`[Preview] Failed to copy to clipboard: ${err}`);
+            }
           }
         }
       }, null, this.disposables);
