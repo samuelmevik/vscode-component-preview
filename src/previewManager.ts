@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { PreviewViteServer } from './server/viteServer';
 import { scanComponents, ScannedComponent } from './parser/astScanner';
 import { getWebviewContent, getServerStoppedHtml } from './webviewHtml';
+import { PreviewCodeLensProvider } from './codelens/previewCodeLensProvider';
 
 export class PreviewManager {
   private panel: vscode.WebviewPanel | null = null;
@@ -20,10 +21,19 @@ export class PreviewManager {
   private isNavigatingToSource: boolean = false;
   private lastNavigateTime: number = 0;
   private lastNavigateTarget: string = '';
+  public codeLensProvider: PreviewCodeLensProvider;
+  private diagnosticCollection: vscode.DiagnosticCollection;
 
   constructor(context: vscode.ExtensionContext) {
     this.extensionContext = context;
     this.outputChannel = vscode.window.createOutputChannel('Component Preview');
+    this.diagnosticCollection = vscode.languages.createDiagnosticCollection('componentPreview');
+    this.disposables.push(this.diagnosticCollection);
+
+    this.codeLensProvider = new PreviewCodeLensProvider({
+      isComponentLocked: (filePath, compName) => this.isComponentLocked(filePath, compName),
+      getActiveComponent: () => this.getActiveComponent(),
+    });
 
     const config = vscode.workspace.getConfiguration('componentPreview');
     const port = config.get<number>('port', 4545);
@@ -33,6 +43,12 @@ export class PreviewManager {
     this.statusBarItem.command = 'componentPreview.stopServer';
     this.disposables.push(this.statusBarItem);
     this.updateServerRunningContext(false);
+
+    vscode.window.onDidChangeActiveColorTheme(
+      (theme) => this.handleColorThemeChange(theme),
+      null,
+      this.disposables
+    );
 
     this.viteServer.onLockToggled = (locked?: boolean) => {
       this.toggleLock(locked);
@@ -52,6 +68,7 @@ export class PreviewManager {
       if (err.stack) {
         this.outputChannel.appendLine(err.stack);
       }
+      this.reportRuntimeDiagnostic(err.message, err.source, err.location);
     };
 
     this.viteServer.onRuntimeErrorUpdate = (data) => {
@@ -59,6 +76,7 @@ export class PreviewManager {
         this.outputChannel.appendLine(
           `[Runtime Error Exact Location] ${data.location.fileName}:${data.location.line}:${data.location.column}`
         );
+        this.reportRuntimeDiagnostic(undefined, undefined, data.location);
       }
     };
 
@@ -164,6 +182,8 @@ export class PreviewManager {
 
     try {
       await this.viteServer.stop();
+      this.diagnosticCollection.clear();
+      this.codeLensProvider.refresh();
       this.outputChannel.appendLine('[Preview] Vite dev server stopped.');
       this.statusBarItem.hide();
       this.updateServerRunningContext(false);
@@ -272,12 +292,14 @@ export class PreviewManager {
           if (stack) {
             this.outputChannel.appendLine(stack);
           }
+          this.reportRuntimeDiagnostic(errMsg, source, location);
         } else if (message.type === 'RUNTIME_ERROR_UPDATE') {
           const { location } = message.payload || {};
           if (location) {
             this.outputChannel.appendLine(
               `[Runtime Error Exact Location] ${location.fileName}:${location.line}:${location.column}`
             );
+            this.reportRuntimeDiagnostic(undefined, undefined, location);
           }
         } else if (message.type === 'SWITCH_COMPONENT') {
           const targetName = message.payload?.componentName;
@@ -345,6 +367,7 @@ export class PreviewManager {
 
   private updateLockStateInUI() {
     vscode.commands.executeCommand('setContext', 'componentPreview.isLocked', this.isLocked);
+    this.codeLensProvider?.refresh();
 
     if (this.panel && this.currentComponent) {
       const lockPrefix = this.isLocked ? '🔒 ' : '';
@@ -401,10 +424,14 @@ export class PreviewManager {
     this.currentFilePath = document.fileName;
     this.currentComponent = target;
 
+    // Clear diagnostics on new render
+    this.diagnosticCollection.delete(document.uri);
+    this.codeLensProvider?.refresh();
+
     this.viteServer.updateState({
       currentFile: document.fileName,
       currentComponentName: target.name,
-      componentStartLine: target.startLine,
+      componentStartLine: target.nameLine || target.startLine,
       commentStartLine: target.commentStartLine,
       meta: target.meta,
       allComponents,
@@ -431,6 +458,7 @@ export class PreviewManager {
             variants: target.meta.variants,
             allComponents,
             isLocked: this.isLocked,
+            themeKind: this.getEffectiveThemeKind(),
           },
         });
       }
@@ -514,6 +542,10 @@ export class PreviewManager {
     if (!document.fileName.endsWith('.tsx') && !document.fileName.endsWith('.jsx')) {
       return;
     }
+
+    // Clear previous diagnostics for this document on save
+    this.diagnosticCollection.delete(document.uri);
+    this.codeLensProvider.refresh();
 
     const activeEditor = vscode.window.activeTextEditor;
 
@@ -718,7 +750,107 @@ export class PreviewManager {
     }
   }
 
+  public isComponentLocked(filePath: string, compName: string): boolean {
+    return this.isLocked && this.lockedFilePath === filePath && this.lockedComponentName === compName;
+  }
+
+  public getActiveComponent(): { filePath: string; compName: string } | null {
+    if (this.currentFilePath && this.currentComponent) {
+      return { filePath: this.currentFilePath, compName: this.currentComponent.name };
+    }
+    return null;
+  }
+
+  public getEffectiveThemeKind(theme?: vscode.ColorTheme): 'dark' | 'light' {
+    const t = theme || vscode.window.activeColorTheme;
+    return t.kind === vscode.ColorThemeKind.Light || t.kind === vscode.ColorThemeKind.HighContrastLight
+      ? 'light'
+      : 'dark';
+  }
+
+  private handleColorThemeChange(theme: vscode.ColorTheme) {
+    const themeKind = this.getEffectiveThemeKind(theme);
+    if (this.panel) {
+      this.panel.webview.postMessage({
+        type: 'SYNC_THEME',
+        payload: {
+          themeKind,
+        },
+      });
+    }
+  }
+
+  public reportRuntimeDiagnostic(
+    message?: string,
+    source?: string,
+    location?: { filePath: string; line: number; column: number; fileName?: string }
+  ): void {
+    if (!location?.filePath) return;
+    const targetPath = this.resolveSourcePath(location.filePath);
+    if (!targetPath) return;
+
+    const targetUri = vscode.Uri.file(targetPath);
+    const lineNum = Math.max((location.line || 1) - 1, 0);
+    const colNum = Math.max((location.column || 1) - 1, 0);
+
+    let endCol = colNum + 15;
+    const openDoc = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === targetUri.fsPath);
+    if (openDoc && lineNum < openDoc.lineCount) {
+      const lineText = openDoc.lineAt(lineNum).text;
+      endCol = Math.max(lineText.length, colNum + 1);
+    }
+
+    const range = new vscode.Range(lineNum, colNum, lineNum, endCol);
+    const diagMsg = message ? `[Component Preview] ${message}` : '[Component Preview] Runtime Error';
+    const diag = new vscode.Diagnostic(range, diagMsg, vscode.DiagnosticSeverity.Error);
+    diag.source = 'Component Preview';
+    if (source) {
+      diag.code = source;
+    }
+
+    this.diagnosticCollection.set(targetUri, [diag]);
+  }
+
+  public async showComponent(documentUri?: vscode.Uri, componentName?: string, line?: number): Promise<void> {
+    let editor: vscode.TextEditor | undefined;
+    if (documentUri) {
+      const doc = await vscode.workspace.openTextDocument(documentUri);
+      editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One, false);
+    } else {
+      editor = vscode.window.activeTextEditor;
+    }
+
+    if (!editor) return;
+
+    if (line !== undefined && line > 0) {
+      const targetLine = Math.max(line - 1, 0);
+      const pos = new vscode.Position(targetLine, 0);
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
+
+    const port = await this.startServer(editor);
+    if (!port) return;
+
+    if (componentName) {
+      const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
+      const target = scanResult.components.find((c) => c.name === componentName);
+      if (target) {
+        if (!this.panel) {
+          await this.showPreview(editor);
+        }
+        const allComponentNames = scanResult.components.map((c) => c.name);
+        await this.renderTargetComponent(editor.document, target, false, allComponentNames);
+        return;
+      }
+    }
+
+    await this.showPreview(editor);
+  }
+
   public dispose() {
+    this.diagnosticCollection.clear();
+    this.diagnosticCollection.dispose();
     this.viteServer.stop();
     this.panel?.dispose();
     this.statusBarItem.dispose();

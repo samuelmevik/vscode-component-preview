@@ -81,6 +81,26 @@ export function getWebviewContent(previewUrl: string, componentName: string): st
     const vscode = acquireVsCodeApi();
     const iframe = document.getElementById('preview-iframe');
 
+    function syncThemeToIframe() {
+      if (iframe && iframe.contentWindow) {
+        const isLight = document.body.classList.contains('vscode-light');
+        const isHighContrast = document.body.classList.contains('vscode-high-contrast');
+        iframe.contentWindow.postMessage({
+          type: 'SYNC_THEME',
+          payload: {
+            themeKind: isLight ? 'light' : 'dark',
+            isHighContrast,
+          }
+        }, '*');
+      }
+    }
+
+    iframe.addEventListener('load', () => {
+      const overlay = document.getElementById('loading-overlay');
+      if (overlay) overlay.style.display = 'none';
+      syncThemeToIframe();
+    });
+
     // Forward messages from iframe (Harness) to VS Code extension host
     window.addEventListener('message', (event) => {
       if (event.data && typeof event.data === 'object' && event.data.type) {

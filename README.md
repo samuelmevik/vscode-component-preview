@@ -21,7 +21,9 @@ A high-performance VS Code extension providing live in-editor previews of React 
 - 📺 **VS Code Output Channel Streaming**: Automatically streams all in-preview console logs directly into VS Code's `Component Preview` output channel.
 - 🔒 **Component Lock / Pin**: Freeze and keep the current preview active with a single click, allowing you to browse or edit other files across your codebase without losing your component view.
 - 🛑 **Full Server Lifecycle Control**: Turn off or restart the background Vite server anytime via the editor title bar, status bar, command palette, or in-preview header.
-- 🚨 **Visual Error Boundary**: Catches syntax or runtime exceptions gracefully with clean stack traces and a retry button.
+- 🚨 **Visual Error Boundary & VS Code Problems Diagnostics**: Catches syntax or runtime exceptions gracefully with clean stack traces and a retry button, and automatically surfaces runtime errors into VS Code's **Problems panel** with inline squigglies under the exact line in your editor.
+- ⚡ **Interactive In-Editor CodeLens**: Action buttons (`▶ Preview <Component />`, `🔄 N Variants`, `🔒 Locked`) appear directly above component declarations and `/* @preview */` comment blocks for one-click preview launches.
+- 🌗 **VS Code Theme Synchronization**: Automatically matches the preview canvas, top navigation bar, and controls with your active VS Code color theme (`Auto`, `Dark`, `Light`, `Checkerboard`).
 
 ---
 
@@ -181,12 +183,14 @@ When the server is stopped while the preview panel is open, a clear status card 
 
 ## ⚙️ Extension Settings
 
-| Setting                              | Default | Description                                                                 |
-| :----------------------------------- | :------ | :-------------------------------------------------------------------------- |
-| `componentPreview.port`              | `4545`  | Port used by the background preview server.                                 |
-| `componentPreview.autoOpenOnSave`    | `false` | Automatically refresh the preview when saving files.                        |
-| `componentPreview.stopServerOnClose` | `false` | Automatically stop the background preview server when panel is closed.      |
-| `componentPreview.lockEditorGroup`   | `true`  | Automatically lock the preview editor group to prevent accidental tab swaps.|
+| Setting                              | Default  | Description                                                                 |
+| :----------------------------------- | :------- | :-------------------------------------------------------------------------- |
+| `componentPreview.port`              | `4545`   | Port used by the background preview server.                                 |
+| `componentPreview.autoOpenOnSave`    | `false`  | Automatically refresh the preview when saving files.                        |
+| `componentPreview.stopServerOnClose` | `false`  | Automatically stop the background preview server when panel is closed.      |
+| `componentPreview.lockEditorGroup`   | `true`   | Automatically lock the preview editor group to prevent accidental tab swaps.|
+| `componentPreview.enableCodeLens`    | `true`   | Display interactive CodeLens buttons above React components and `@preview`. |
+| `componentPreview.theme`             | `"auto"` | Default canvas theme (`auto`, `dark`, `light`, `checkerboard`).             |
 
 ---
 

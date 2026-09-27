@@ -63,7 +63,7 @@ interface HarnessProps {
 }
 
 type ViewportMode = 'responsive' | 'mobile' | 'tablet' | 'desktop';
-type CanvasTheme = 'dark' | 'light' | 'checkerboard';
+type CanvasTheme = 'auto' | 'dark' | 'light' | 'checkerboard';
 
 const VIEWPORT_PRESETS: Record<Exclude<ViewportMode, 'responsive'>, { width: number; height: number; label: string }> = {
   mobile: { width: 375, height: 667, label: 'Mobile (375 × 667)' },
@@ -109,8 +109,30 @@ export const Harness: React.FC<HarnessProps> = ({
   const [isLocked, setIsLocked] = useState(initialIsLocked);
   const [allComponents, setAllComponents] = useState<string[]>(initialAllComponents);
   const [viewportMode, setViewportMode] = useState<ViewportMode>('responsive');
-  const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>('dark');
+  const [vscodeTheme, setVsCodeTheme] = useState<'dark' | 'light'>('dark');
+  const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>(() => {
+    try {
+      const saved = localStorage.getItem('vscode_preview_canvas_theme');
+      if (saved === 'auto' || saved === 'dark' || saved === 'light' || saved === 'checkerboard') {
+        return saved;
+      }
+    } catch {}
+    return 'auto';
+  });
   const [remountCount, setRemountCount] = useState<number>(0);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('vscode_preview_canvas_theme', canvasTheme);
+    } catch {}
+  }, [canvasTheme]);
+
+  const effectiveTheme = useMemo(() => {
+    if (canvasTheme === 'auto') {
+      return vscodeTheme;
+    }
+    return canvasTheme;
+  }, [canvasTheme, vscodeTheme]);
 
   // Sync actionLogs to sessionStorage when preserveLog is active
   useEffect(() => {
@@ -175,6 +197,13 @@ export const Harness: React.FC<HarnessProps> = ({
       const message = event.data;
       if (!message || typeof message !== 'object') return;
 
+      if (message.type === 'SYNC_THEME') {
+        const themeKind = message.payload?.themeKind;
+        if (themeKind === 'light' || themeKind === 'dark') {
+          setVsCodeTheme(themeKind);
+        }
+      }
+
       if (message.type === 'SYNC_LOCK') {
         setIsLocked(!!message.payload.locked);
       }
@@ -183,6 +212,10 @@ export const Harness: React.FC<HarnessProps> = ({
         // Reset error state and remount so any newly previewed component or updated code renders fresh
         setRemountCount((prev) => prev + 1);
         setRuntimeErrors([]);
+
+        if (message.payload.themeKind) {
+          setVsCodeTheme(message.payload.themeKind === 'light' ? 'light' : 'dark');
+        }
 
         if (message.payload.isLocked !== undefined) {
           setIsLocked(!!message.payload.isLocked);
@@ -405,9 +438,10 @@ export const Harness: React.FC<HarnessProps> = ({
 
   const cycleTheme = useCallback(() => {
     setCanvasTheme((curr) => {
+      if (curr === 'auto') return 'dark';
       if (curr === 'dark') return 'light';
       if (curr === 'light') return 'checkerboard';
-      return 'dark';
+      return 'auto';
     });
   }, []);
 
@@ -719,7 +753,7 @@ export const Harness: React.FC<HarnessProps> = ({
   }, []);
 
   const canvasBgStyle = useMemo(() => {
-    if (canvasTheme === 'checkerboard') {
+    if (effectiveTheme === 'checkerboard') {
       const px = camera.pan.x;
       const py = camera.pan.y;
       return {
@@ -729,10 +763,10 @@ export const Harness: React.FC<HarnessProps> = ({
     return {
       backgroundPosition: `${camera.pan.x}px ${camera.pan.y}px`,
     };
-  }, [canvasTheme, camera.pan.x, camera.pan.y]);
+  }, [effectiveTheme, camera.pan.x, camera.pan.y]);
 
   return (
-    <div className={`preview-container theme-${canvasTheme}`}>
+    <div className={`preview-container theme-${effectiveTheme} ${canvasTheme === 'auto' ? 'mode-auto' : ''}`}>
       {/* Top Header / Navigation & Controls */}
       <header className="preview-nav">
         <div className="preview-left-group">
@@ -814,9 +848,18 @@ export const Harness: React.FC<HarnessProps> = ({
           <button
             className={`toolbar-btn theme-toggle ${canvasTheme}`}
             onClick={cycleTheme}
-            title={`Canvas Theme: ${canvasTheme.toUpperCase()} (Click to toggle)`}
+            title={
+              canvasTheme === 'auto'
+                ? `Canvas Theme: AUTO (Synced with VS Code: ${vscodeTheme.toUpperCase()}) (Click to change)`
+                : `Canvas Theme: ${canvasTheme.toUpperCase()} (Click to toggle)`
+            }
           >
-            {canvasTheme === 'dark' ? (
+            {canvasTheme === 'auto' ? (
+              <span className="auto-theme-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 10, fontWeight: 700 }}>
+                {vscodeTheme === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
+                <span style={{ fontSize: 9, opacity: 0.85 }}>A</span>
+              </span>
+            ) : canvasTheme === 'dark' ? (
               <Moon size={13} />
             ) : canvasTheme === 'light' ? (
               <Sun size={13} />

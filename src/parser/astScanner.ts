@@ -9,6 +9,8 @@ export interface ScannedComponent {
   startLine: number;
   endLine: number;
   commentStartLine: number;
+  nameLine: number;
+  nameColumn: number;
   meta: ComponentPreviewMeta;
 }
 
@@ -66,7 +68,8 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
     name: string,
     node: ts.Node,
     isDefaultExport: boolean,
-    isNamedExport: boolean
+    isNamedExport: boolean,
+    nameNode?: ts.Node
   ) {
     if (components.some((c) => c.name === name)) {
       return;
@@ -78,6 +81,9 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
     const fullStart = sourceFile.getLineAndCharacterOfPosition(node.getFullStart());
     const start = sourceFile.getLineAndCharacterOfPosition(node.getStart());
     const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+    const namePos = nameNode
+      ? sourceFile.getLineAndCharacterOfPosition(nameNode.getStart(sourceFile))
+      : start;
 
     components.push({
       name,
@@ -86,6 +92,8 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
       startLine: start.line + 1,
       endLine: end.line + 1,
       commentStartLine: fullStart.line + 1,
+      nameLine: namePos.line + 1,
+      nameColumn: namePos.character + 1,
       meta,
     });
   }
@@ -102,7 +110,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
           (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
 
         if (name && isComponentIdentifier(name)) {
-          registerComponent(name, node, isDefault, isExported);
+          registerComponent(name, node, isDefault, isExported, node.name);
         }
       }
     }
@@ -115,7 +123,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
           (isDefault ? path.basename(filePath, path.extname(filePath)) : undefined);
 
         if (name && isComponentIdentifier(name)) {
-          registerComponent(name, node, isDefault, isExported);
+          registerComponent(name, node, isDefault, isExported, node.name);
         }
       }
     }
@@ -127,7 +135,7 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
           if (ts.isIdentifier(declaration.name)) {
             const name = declaration.name.text;
             if (isComponentIdentifier(name) && isComponentDeclaration(declaration)) {
-              registerComponent(name, node, isDefault, isExported);
+              registerComponent(name, node, isDefault, isExported, declaration.name);
             }
           }
         }
@@ -142,12 +150,12 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
         if (existing) {
           existing.isDefaultExport = true;
         } else if (isComponentIdentifier(name)) {
-          registerComponent(name, node, true, true);
+          registerComponent(name, node, true, true, node.expression);
         }
       } else if (ts.isArrowFunction(node.expression) || ts.isFunctionExpression(node.expression)) {
         const fileBase = path.basename(filePath, path.extname(filePath));
         const name = isComponentIdentifier(fileBase) ? fileBase : 'DefaultComponent';
-        registerComponent(name, node, true, true);
+        registerComponent(name, node, true, true, node);
       } else if (ts.isCallExpression(node.expression)) {
         const callArg = node.expression.arguments[0];
         if (callArg && ts.isIdentifier(callArg)) {
@@ -156,12 +164,12 @@ export function scanComponents(sourceText: string, filePath: string, cursorLine?
           if (existing) {
             existing.isDefaultExport = true;
           } else if (isComponentIdentifier(name)) {
-            registerComponent(name, node, true, true);
+            registerComponent(name, node, true, true, callArg);
           }
         } else {
           const fileBase = path.basename(filePath, path.extname(filePath));
           const name = isComponentIdentifier(fileBase) ? fileBase : 'DefaultComponent';
-          registerComponent(name, node, true, true);
+          registerComponent(name, node, true, true, node);
         }
       }
     }

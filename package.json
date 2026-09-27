@@ -54,6 +54,11 @@
         "icon": "$(play)"
       },
       {
+        "command": "componentPreview.openComponent",
+        "title": "Preview Component",
+        "category": "Component Preview"
+      },
+      {
         "command": "componentPreview.stopServer",
         "title": "Stop Preview Server",
         "category": "Component Preview",
@@ -159,6 +164,17 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically lock the preview editor group so files selected in navigation do not replace the preview"
+        },
+        "componentPreview.enableCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show interactive CodeLens buttons above React component declarations and @preview comment blocks"
+        },
+        "componentPreview.theme": {
+          "type": "string",
+          "enum": ["auto", "dark", "light", "checkerboard"],
+          "default": "auto",
+          "description": "Default preview canvas theme ('auto' automatically syncs with your active VS Code color theme)"
         }
       }
     }
@@ -168,7 +184,7 @@
     "build": "node esbuild.config.js --production",
     "watch": "node esbuild.config.js --watch",
     "compile": "tsc -p ./ --noEmit",
-    "test": "npx tsx test/testParser.ts && npx tsx test/testNetworkInterceptor.ts && npx tsx test/testViteServer.ts && npx tsx test/testErrorHandling.ts && npx tsx test/testReduxInterceptor.ts && npx tsx test/testConsoleInterceptor.ts",
+    "test": "npx tsx test/testParser.ts && npx tsx test/testNetworkInterceptor.ts && npx tsx test/testViteServer.ts && npx tsx test/testErrorHandling.ts && npx tsx test/testReduxInterceptor.ts && npx tsx test/testConsoleInterceptor.ts && npx tsx test/testVsCodeIntegrations.ts",
     "package": "vsce package",
     "publish": "vsce publish"
   },
