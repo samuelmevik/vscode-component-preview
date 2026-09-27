@@ -293,7 +293,7 @@ export const Harness: React.FC<HarnessProps> = ({
     let handleThemeChange: ((data: any) => void) | undefined;
     if (hot && typeof hot.on === 'function') {
       handleBeforeUpdate = () => {
-        setRemountCount((prev) => prev + 1);
+        setRuntimeErrors([]);
       };
       hot.on('vite:beforeUpdate', handleBeforeUpdate);
 

@@ -78,9 +78,6 @@ function generateVirtualEntry(
           }, 'No active component selected for preview.')
         );
       }
-      if (import.meta.hot) {
-        import.meta.hot.accept();
-      }
     `;
   }
 
@@ -348,6 +345,8 @@ export class PreviewViteServer {
           }
         }
       } catch {}
+      // Send a targeted HMR update for the virtual entry so the browser
+      // re-fetches and re-executes it with the new component/file.
       const hot = (this.server as any).hot || (this.server as any).ws;
       if (hot && typeof hot.send === 'function') {
         hot.send({
