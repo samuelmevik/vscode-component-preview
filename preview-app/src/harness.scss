@@ -270,6 +270,113 @@ html, body {
         }
       }
     }
+
+    &.debug-group {
+      position: relative;
+
+      .debug-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 3px 6px;
+        color: #e2b340;
+        background: rgba(226, 179, 64, 0.1);
+        border: 1px solid rgba(226, 179, 64, 0.25);
+        border-radius: 3px;
+
+        &:hover {
+          background: rgba(226, 179, 64, 0.2);
+          border-color: rgba(226, 179, 64, 0.45);
+          color: #ffd866;
+        }
+
+        .debug-icon {
+          color: #e2b340;
+        }
+
+        .debug-btn-text {
+          font-weight: 500;
+        }
+      }
+
+      .debug-dropdown-btn {
+        padding: 3px 4px;
+        color: #e2b340;
+        background: rgba(226, 179, 64, 0.08);
+
+        &:hover {
+          background: rgba(226, 179, 64, 0.2);
+        }
+      }
+
+      .debug-dropdown-menu {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        background: #252526;
+        border: 1px solid #3e3e42;
+        border-radius: 6px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        min-width: 250px;
+        z-index: 1000;
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+
+        .debug-menu-item {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 6px 10px;
+          background: transparent;
+          border: none;
+          color: #cccccc;
+          border-radius: 4px;
+          cursor: pointer;
+          text-align: left;
+          font-size: 11px;
+          transition: background 0.12s ease;
+
+          &:hover {
+            background: #094771;
+            color: #ffffff;
+
+            .menu-icon {
+              color: #ffffff;
+            }
+
+            .menu-item-text small {
+              color: #e0e0e0;
+            }
+          }
+
+          .menu-icon {
+            color: #e2b340;
+            margin-top: 2px;
+            flex-shrink: 0;
+          }
+
+          .menu-item-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+
+            strong {
+              font-weight: 500;
+              font-size: 11px;
+            }
+
+            small {
+              color: #999999;
+              font-size: 10px;
+              line-height: 1.3;
+            }
+          }
+        }
+      }
+    }
   }
 
   .toolbar-btn {
@@ -665,6 +772,15 @@ html, body {
         &:hover {
           color: #ffffff;
           background: rgba(255, 255, 255, 0.1);
+        }
+
+        &.debug-panel-btn {
+          color: #e2b340;
+
+          &:hover {
+            color: #ffd866;
+            background: rgba(226, 179, 64, 0.15);
+          }
         }
       }
     }

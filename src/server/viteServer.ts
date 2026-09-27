@@ -294,6 +294,8 @@ export class PreviewViteServer {
   public onRuntimeErrorUpdate?: (data: { id?: string; location: any }) => void;
   public onConsoleLog?: (log: { level: string; text: string; timestamp?: string }) => void;
   public onCopyToClipboard?: (text: string) => Promise<void> | void;
+  public onStartDebugRequested?: (componentName?: string, target?: 'devtools' | 'integrated' | 'browser') => void;
+  public onOpenDevToolsRequested?: () => void;
 
   constructor(extensionPath: string, port = 4545) {
     this.extensionPath = extensionPath;
@@ -385,6 +387,29 @@ export class PreviewViteServer {
             res.end(JSON.stringify({ ok: true }));
             if (this.onStopRequested) {
               setTimeout(() => this.onStopRequested?.(), 50);
+            }
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/start_debug') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                this.onStartDebugRequested?.(data.componentName, data.target);
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/open_devtools') && req.method === 'POST') {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+            if (this.onOpenDevToolsRequested) {
+              setTimeout(() => this.onOpenDevToolsRequested?.(), 50);
             }
             return;
           }

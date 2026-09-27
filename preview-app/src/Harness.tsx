@@ -21,6 +21,8 @@ import {
   AlertTriangle,
   X,
   ExternalLink,
+  Bug,
+  ChevronDown,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MockReduxProvider, ActionLogItem } from './MockReduxProvider';
@@ -288,6 +290,51 @@ export const Harness: React.FC<HarnessProps> = ({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     }).catch(() => {});
+  }, []);
+
+  const [showDebugMenu, setShowDebugMenu] = useState(false);
+  const debugMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showDebugMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (debugMenuRef.current && !debugMenuRef.current.contains(e.target as Node)) {
+        setShowDebugMenu(false);
+      }
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    return () => window.removeEventListener('mousedown', handleClickOutside);
+  }, [showDebugMenu]);
+
+  const handleStartDebug = useCallback(() => {
+    setShowDebugMenu(false);
+    window.parent.postMessage(
+      { type: 'START_DEBUG', payload: { componentName } },
+      '*'
+    );
+    fetch('/__preview_api/start_debug', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ componentName }),
+    }).catch(() => {});
+  }, [componentName]);
+
+  const handleOpenDevTools = useCallback(() => {
+    setShowDebugMenu(false);
+    window.parent.postMessage({ type: 'OPEN_DEVTOOLS' }, '*');
+    fetch('/__preview_api/open_devtools', {
+      method: 'POST',
+    }).catch(() => {});
+  }, []);
+
+  const handleTriggerDebuggerStatement = useCallback(() => {
+    setShowDebugMenu(false);
+    try {
+      // eslint-disable-next-line no-debugger
+      debugger;
+      const fn = new Function('debugger;');
+      fn();
+    } catch {}
   }, []);
 
   const handleSwitchComponent = useCallback((newCompName: string) => {
@@ -922,6 +969,59 @@ export const Harness: React.FC<HarnessProps> = ({
           >
             <RefreshCw size={13} />
           </button>
+
+          {/* Debug Component in VS Code Button & Menu */}
+          <div className="toolbar-btn-group debug-group" title="Debug Component (Attach VS Code debugger with breakpoints & stepping)">
+            <button
+              className="toolbar-btn debug-btn"
+              onClick={handleStartDebug}
+              title={`Debug <${componentName} /> in VS Code (Attaches debugger with source breakpoints)`}
+            >
+              <Bug size={13} className="debug-icon" />
+              <span className="debug-btn-text">Debug</span>
+            </button>
+            <button
+              className={`toolbar-btn debug-dropdown-btn ${showDebugMenu ? 'active' : ''}`}
+              onClick={() => setShowDebugMenu((prev) => !prev)}
+              title="More debugging options"
+            >
+              <ChevronDown size={10} />
+            </button>
+            {showDebugMenu && (
+              <div className="debug-dropdown-menu" ref={debugMenuRef}>
+                <button
+                  className="debug-menu-item"
+                  onClick={handleStartDebug}
+                >
+                  <Bug size={13} className="menu-icon" />
+                  <div className="menu-item-text">
+                    <strong>Start VS Code Debugger</strong>
+                    <small>Launch browser session with breakpoints &amp; stepping</small>
+                  </div>
+                </button>
+                <button
+                  className="debug-menu-item"
+                  onClick={handleOpenDevTools}
+                >
+                  <ExternalLink size={13} className="menu-icon" />
+                  <div className="menu-item-text">
+                    <strong>Open Webview DevTools</strong>
+                    <small>Inspect DOM elements, styles &amp; internal console</small>
+                  </div>
+                </button>
+                <button
+                  className="debug-menu-item"
+                  onClick={handleTriggerDebuggerStatement}
+                >
+                  <AlertTriangle size={13} className="menu-icon" />
+                  <div className="menu-item-text">
+                    <strong>Trigger debugger; statement</strong>
+                    <small>Pause execution in open DevTools or attached debugger</small>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Lock Button */}
           <button

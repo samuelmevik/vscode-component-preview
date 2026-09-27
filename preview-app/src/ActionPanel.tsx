@@ -27,6 +27,7 @@ import {
   Play,
   Code,
   Table,
+  Bug,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
 import { navigateToSource } from './errorLocationParser';
@@ -1623,6 +1624,16 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
           )}
         </div>
         <div className="action-panel-actions" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="debug-panel-btn"
+            onClick={() => {
+              window.parent.postMessage({ type: 'START_DEBUG' }, '*');
+              fetch('/__preview_api/start_debug', { method: 'POST' }).catch(() => {});
+            }}
+            title="Debug Component in VS Code (Ctrl+Alt+D)"
+          >
+            <Bug size={13} />
+          </button>
           {logs.length > 0 && (
             <button className="clear-btn" onClick={onClear} title="Clear all logs">
               <Trash2 size={13} />

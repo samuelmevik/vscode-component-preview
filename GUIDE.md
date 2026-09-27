@@ -1242,6 +1242,9 @@ All settings live under `componentPreview.*`:
 | `componentPreview.stopServerOnClose` | `boolean` | `false` | Stop the Vite server when the preview panel is closed |
 | `componentPreview.lockEditorGroup` | `boolean` | `true` | Lock the preview editor group so other files don't replace it |
 | `componentPreview.enableCodeLens` | `boolean` | `true` | Show CodeLens buttons above component declarations |
+| `componentPreview.showDebugCodeLens` | `boolean` | `true` | Show `🐞 Debug <Component />` CodeLens buttons |
+| `componentPreview.debugTarget` | `string` | `"devtools"` | Debugger target: `"devtools"` (Webview DevTools), `"integrated"` (VS Code integrated browser tab with gutter breakpoints, zero external windows), or `"browser"` (external browser) |
+| `componentPreview.debugBrowser` | `string` | `"auto"` | Browser for debugging sessions (`"integrated"`, `"auto"`, `"chrome"`, `"edge"`) |
 | `componentPreview.theme` | `string` | `"auto"` | Canvas theme: `"auto"`, `"dark"`, `"light"`, `"checkerboard"` |
 
 **Example `settings.json`:**
@@ -1250,7 +1253,10 @@ All settings live under `componentPreview.*`:
 {
   "componentPreview.port": 5000,
   "componentPreview.theme": "dark",
+  "componentPreview.debugTarget": "devtools",
   "componentPreview.enableCodeLens": true,
+  "componentPreview.showDebugCodeLens": true,
+  "componentPreview.debugBrowser": "auto",
   "componentPreview.autoOpenOnSave": false,
   "componentPreview.stopServerOnClose": true,
   "componentPreview.lockEditorGroup": true
@@ -1264,6 +1270,9 @@ All settings live under `componentPreview.*`:
 | Command | Keybinding | Description |
 |---|---|---|
 | **Open Component Preview** | `Ctrl+Alt+P` / `Cmd+Alt+P` | Open the preview panel for the current file |
+| **Debug Component Preview** | `Ctrl+Alt+D` / `Cmd+Alt+D` | Launch debugging session with VS Code breakpoints |
+| **Debug Component** | *(via CodeLens)* | Launch debugger directly for a specific component |
+| **Open Webview Developer Tools** | *(command palette / title bar)* | Open internal Chromium DevTools for the webview |
 | **Refresh Preview** | `Ctrl+Alt+R` / `Cmd+Alt+R` | Force refresh the preview |
 | **Lock / Unlock** | `Ctrl+Alt+L` / `Cmd+Alt+L` | Toggle lock on the current component |
 | **Preview Component** | *(via CodeLens)* | Open preview for a specific named component |
@@ -1276,7 +1285,9 @@ All commands are available in the **Command Palette** (`Ctrl+Shift+P`) under the
 
 **Editor title bar buttons** (visible when a `.jsx`/`.tsx` file is active):
 - ▶ **Open Preview**
+- 🐞 **Debug Preview** (`Ctrl+Alt+D`)
 - ↻ **Refresh**
 - 🌐 **Open in Browser** (when server is running)
 - 🔒 **Lock/Unlock**
 - ⏹ **Stop Server** (when server is running)
+- 🛠 **Open DevTools** (when server is running)

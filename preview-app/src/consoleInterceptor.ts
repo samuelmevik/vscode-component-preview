@@ -381,15 +381,35 @@ export function evaluateConsoleExpression(
       });
     }
 
-    // Evaluate expression
-    const fn = new Function(
-      '$store',
-      '$state',
-      '$props',
-      'dispatch',
-      `return (${trimmed});`
-    );
-    const rawResult = fn(storeProxy, state, props, store?.dispatch?.bind(store));
+    // Evaluate expression or statement (supports debugger;, declarations, etc.)
+    let fn: Function;
+    try {
+      fn = new Function(
+        '$store',
+        '$state',
+        '$props',
+        'dispatch',
+        '$debug',
+        `return (${trimmed});`
+      );
+    } catch {
+      fn = new Function(
+        '$store',
+        '$state',
+        '$props',
+        'dispatch',
+        '$debug',
+        trimmed
+      );
+    }
+
+    const debugHelper = () => {
+      // eslint-disable-next-line no-debugger
+      debugger;
+      return 'Debugger paused';
+    };
+
+    const rawResult = fn(storeProxy, state, props, store?.dispatch?.bind(store), debugHelper);
     const sanitized = serializeLogArg(rawResult);
 
     let resultPreview = String(rawResult);

@@ -40,6 +40,9 @@
     "onLanguage:javascriptreact",
     "onLanguage:typescriptreact",
     "onCommand:componentPreview.openPreview",
+    "onCommand:componentPreview.debugPreview",
+    "onCommand:componentPreview.debugComponent",
+    "onCommand:componentPreview.openDevTools",
     "onCommand:componentPreview.stopServer",
     "onCommand:componentPreview.startServer",
     "onCommand:componentPreview.restartServer"
@@ -52,6 +55,24 @@
         "title": "Open Component Preview",
         "category": "Component Preview",
         "icon": "$(play)"
+      },
+      {
+        "command": "componentPreview.debugPreview",
+        "title": "Debug Component Preview",
+        "category": "Component Preview",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "componentPreview.debugComponent",
+        "title": "Debug Component",
+        "category": "Component Preview",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "componentPreview.openDevTools",
+        "title": "Open Webview Developer Tools",
+        "category": "Component Preview",
+        "icon": "$(tools)"
       },
       {
         "command": "componentPreview.openComponent",
@@ -103,6 +124,12 @@
         "when": "editorTextFocus && resourceExtname =~ /\\.(jsx|tsx)$/"
       },
       {
+        "command": "componentPreview.debugPreview",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d",
+        "when": "editorTextFocus && resourceExtname =~ /\\.(jsx|tsx)$/"
+      },
+      {
         "command": "componentPreview.toggleLock",
         "key": "ctrl+alt+l",
         "mac": "cmd+alt+l"
@@ -119,6 +146,11 @@
           "command": "componentPreview.openPreview",
           "when": "resourceExtname =~ /\\.(jsx|tsx)$/",
           "group": "navigation@1"
+        },
+        {
+          "command": "componentPreview.debugPreview",
+          "when": "resourceExtname =~ /\\.(jsx|tsx)$/",
+          "group": "navigation@1.5"
         },
         {
           "command": "componentPreview.refreshPreview",
@@ -139,6 +171,11 @@
           "command": "componentPreview.stopServer",
           "when": "componentPreview.serverRunning && resourceExtname =~ /\\.(jsx|tsx)$/",
           "group": "navigation@5"
+        },
+        {
+          "command": "componentPreview.openDevTools",
+          "when": "componentPreview.serverRunning && resourceExtname =~ /\\.(jsx|tsx)$/",
+          "group": "navigation@6"
         }
       ]
     },
@@ -175,16 +212,40 @@
           "enum": ["auto", "dark", "light", "checkerboard"],
           "default": "auto",
           "description": "Default preview canvas theme ('auto' automatically syncs with your active VS Code color theme)"
+        },
+        "componentPreview.debugBrowser": {
+          "type": "string",
+          "enum": ["auto", "integrated", "chrome", "edge"],
+          "default": "auto",
+          "description": "Browser to launch for component debugging sessions ('integrated' uses VS Code's built-in editor-browser without opening external windows; 'auto' selects Chrome or Edge based on availability)"
+        },
+        "componentPreview.showDebugCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show interactive Debug CodeLens button above React component declarations"
+        },
+        "componentPreview.debugTarget": {
+          "type": "string",
+          "enum": ["devtools", "integrated", "browser"],
+          "default": "devtools",
+          "description": "Default debugger target: 'devtools' opens internal Webview Developer Tools; 'integrated' uses VS Code's editor-browser with in-editor gutter breakpoints and zero external windows; 'browser' launches external Chrome or Edge"
         }
       }
-    }
+    },
+    "debuggers": [
+      {
+        "type": "componentPreview",
+        "label": "Component Preview: Debug Component",
+        "languages": ["javascriptreact", "typescriptreact"]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.config.js --production",
     "watch": "node esbuild.config.js --watch",
     "compile": "tsc -p ./ --noEmit",
-    "test": "npx tsx test/testParser.ts && npx tsx test/testNetworkInterceptor.ts && npx tsx test/testViteServer.ts && npx tsx test/testErrorHandling.ts && npx tsx test/testReduxInterceptor.ts && npx tsx test/testConsoleInterceptor.ts && npx tsx test/testVsCodeIntegrations.ts",
+    "test": "npx tsx test/testParser.ts && npx tsx test/testNetworkInterceptor.ts && npx tsx test/testViteServer.ts && npx tsx test/testErrorHandling.ts && npx tsx test/testReduxInterceptor.ts && npx tsx test/testConsoleInterceptor.ts && npx tsx test/testVsCodeIntegrations.ts && npx tsx test/testDebuggingIntegration.ts",
     "package": "vsce package",
     "publish": "vsce publish"
   },

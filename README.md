@@ -22,7 +22,8 @@ A high-performance VS Code extension providing live in-editor previews of React 
 - 🔒 **Component Lock / Pin**: Freeze and keep the current preview active with a single click, allowing you to browse or edit other files across your codebase without losing your component view.
 - 🛑 **Full Server Lifecycle Control**: Turn off or restart the background Vite server anytime via the editor title bar, status bar, command palette, or in-preview header.
 - 🚨 **Visual Error Boundary & VS Code Problems Diagnostics**: Catches syntax or runtime exceptions gracefully with clean stack traces and a retry button, and automatically surfaces runtime errors into VS Code's **Problems panel** with inline squigglies under the exact line in your editor.
-- ⚡ **Interactive In-Editor CodeLens**: Action buttons (`▶ Preview <Component />`, `🔄 N Variants`, `🔒 Locked`) appear directly above component declarations and `/* @preview */` comment blocks for one-click preview launches.
+- ⚡ **Interactive In-Editor CodeLens**: Action buttons (`▶ Preview <Component />`, `🐞 Debug <Component />`, `🔄 N Variants`, `🔒 Locked`) appear directly above component declarations and `/* @preview */` comment blocks for one-click preview launches.
+- 🐞 **Live Component Debugging with Breakpoints**: Debug components directly from VS Code with source-level breakpoints, call stacks, variable inspection, and step-through debugging via Chrome or Edge. Launch via one-click CodeLens, editor title button, preview header, or shortcut (`Ctrl+Alt+D`). Includes quick access to Webview Developer Tools and `debugger;` triggers.
 - 🌗 **VS Code Theme Synchronization**: Automatically matches the preview canvas, top navigation bar, and controls with your active VS Code color theme (`Auto`, `Dark`, `Light`, `Checkerboard`).
 
 ---
@@ -181,6 +182,33 @@ When the server is stopped while the preview panel is open, a clear status card 
 
 ---
 
+## 🐞 Debugging Components
+
+The extension features first-class debugging support so you can pause execution, set breakpoints, step through component renders and event handlers, inspect scopes and closures, and view call stacks directly inside VS Code:
+
+### 1. In-Editor CodeLens Debugging
+- Set any breakpoint in your `.jsx` or `.tsx` file (e.g. at the top of the component or inside an `onClick` callback).
+- Click the **`🐞 Debug <Component />`** CodeLens button that appears directly above your component declaration line.
+- VS Code automatically connects its built-in JavaScript debugger (`pwa-chrome` or `pwa-msedge`), navigates to the live component preview with Vite sourcemaps, and halts execution directly at your source line when the component mounts or when you trigger an event!
+
+### 2. Preview Toolbar Debug Controls
+- In the top preview navigation bar, click the **Debug** button to attach or launch the debugger for the currently displayed component.
+- Open the dropdown arrow next to **Debug** for more options:
+  - **Start VS Code Debugger**: Launches browser session with full source breakpoint binding.
+  - **Open Webview DevTools**: Opens Chromium DevTools for the webview to inspect DOM elements, CSS styles, and network calls.
+  - **Trigger `debugger;` statement**: Instantly halts execution if DevTools or VS Code Debugger is open.
+
+### 3. Editor Title Bar & Keyboard Shortcut
+- Click the Debug icon `$(debug-alt)` in the editor tab title bar when viewing any React file.
+- Or press **`Ctrl+Alt+D`** (or **`Cmd+Alt+D`** on macOS).
+
+### 4. Interactive Console REPL Debugging
+- Open the **Console & Actions** drawer at the bottom of the preview canvas.
+- Click the **Bug** icon in the drawer actions to launch debugging.
+- Type `debugger;` or `$debug()` in the REPL prompt at the bottom to pause execution and inspect local scopes.
+
+---
+
 ## ⚙️ Extension Settings
 
 | Setting                              | Default  | Description                                                                 |
@@ -190,6 +218,8 @@ When the server is stopped while the preview panel is open, a clear status card 
 | `componentPreview.stopServerOnClose` | `false`  | Automatically stop the background preview server when panel is closed.      |
 | `componentPreview.lockEditorGroup`   | `true`   | Automatically lock the preview editor group to prevent accidental tab swaps.|
 | `componentPreview.enableCodeLens`    | `true`   | Display interactive CodeLens buttons above React components and `@preview`. |
+| `componentPreview.debugTarget`       | `"devtools"` | Debug target: `"devtools"` (Webview DevTools), `"integrated"` (VS Code integrated browser tab with gutter breakpoints, zero external windows), or `"browser"` (external browser). |
+| `componentPreview.debugBrowser`      | `"auto"` | Browser to launch for browser debugging sessions (`"integrated"`, `"auto"`, `"chrome"`, `"edge"`).  |
 | `componentPreview.theme`             | `"auto"` | Default canvas theme (`auto`, `dark`, `light`, `checkerboard`).             |
 
 ---
@@ -199,6 +229,7 @@ When the server is stopped while the preview panel is open, a clear status card 
 | Command                           | Windows / Linux | macOS        |
 | :-------------------------------- | :-------------- | :----------- |
 | `Open Component Preview`          | `Ctrl+Alt+P`    | `Cmd+Alt+P`  |
+| `Debug Component Preview`         | `Ctrl+Alt+D`    | `Cmd+Alt+D`  |
 | `Lock / Unlock Component Preview` | `Ctrl+Alt+L`    | `Cmd+Alt+L`  |
 | `Refresh Preview`                 | `Ctrl+Alt+R`    | `Cmd+Alt+R`  |
 
@@ -210,3 +241,5 @@ When the server is stopped while the preview panel is open, a clear status card 
 - **Build extension**: `npm run build`
 - **Run parser tests**: `npx tsx test/testParser.ts`
 - **Run Vite server tests**: `npx tsx test/testViteServer.ts`
+- **Run debugging integration tests**: `npx tsx test/testDebuggingIntegration.ts`
+- **Run full test suite**: `npm test`

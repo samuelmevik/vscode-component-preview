@@ -536,6 +536,9 @@ export const Throwy = () => {
 
 export const Test = () => {
   const [text, setText] = useState('');
+  const func = useCallback(() => {
+    console.log('Function called with text:', text);
+  }, [text]);
   return <>
     <Throwy />
     <input
@@ -544,6 +547,7 @@ export const Test = () => {
       value={text}
       onChange={(e) => setText(e.target.value)}
     />
+    <button onClick={func}>Log Text</button>
 
   </>;
 }

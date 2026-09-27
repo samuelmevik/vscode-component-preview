@@ -5,6 +5,12 @@ import { PreviewViteServer } from './server/viteServer';
 import { scanComponents, ScannedComponent } from './parser/astScanner';
 import { getWebviewContent, getServerStoppedHtml } from './webviewHtml';
 import { PreviewCodeLensProvider } from './codelens/previewCodeLensProvider';
+import {
+  resolveDebugBrowserType,
+  detectInstalledBrowser,
+  buildComponentDebugConfig,
+  DebugBrowserType,
+} from './debug/debugConfigProvider';
 
 export class PreviewManager {
   private panel: vscode.WebviewPanel | null = null;
@@ -56,6 +62,22 @@ export class PreviewManager {
 
     this.viteServer.onStopRequested = () => {
       this.stopServer();
+    };
+
+    this.viteServer.onStartDebugRequested = async (compName, target) => {
+      const config = vscode.workspace.getConfiguration('componentPreview');
+      const debugTarget = target || config.get<string>('debugTarget', 'devtools');
+      if (debugTarget === 'integrated') {
+        await this.startDebugSession(undefined, compName, 'editor-browser');
+      } else if (debugTarget === 'browser') {
+        await this.startDebugSession(undefined, compName);
+      } else {
+        await this.openWebviewDeveloperTools();
+      }
+    };
+
+    this.viteServer.onOpenDevToolsRequested = async () => {
+      await this.openWebviewDeveloperTools();
     };
 
     this.viteServer.onNavigateRequested = (filePath, line, column) => {
@@ -274,6 +296,16 @@ export class PreviewManager {
           await this.showPreview();
         } else if (message.type === 'STOP_SERVER') {
           await this.stopServer();
+        } else if (message.type === 'START_DEBUG') {
+          const config = vscode.workspace.getConfiguration('componentPreview');
+          const debugTarget = message.payload?.target || config.get<string>('debugTarget', 'devtools');
+          if (debugTarget === 'browser') {
+            await this.startDebugSession(undefined, message.payload?.componentName);
+          } else {
+            await this.openWebviewDeveloperTools();
+          }
+        } else if (message.type === 'OPEN_DEVTOOLS') {
+          await this.openWebviewDeveloperTools();
         } else if (message.type === 'CONSOLE_LOG') {
           const { level, text, timestamp } = message.payload || {};
           const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
@@ -863,6 +895,190 @@ export class PreviewManager {
     }
 
     await this.showPreview(editor);
+  }
+
+  public resolveDebugBrowserType(overridePref?: string): DebugBrowserType {
+    const config = vscode.workspace.getConfiguration('componentPreview');
+    const pref = overridePref || config.get<string>('debugBrowser', 'auto');
+    return resolveDebugBrowserType(pref);
+  }
+
+  public async openWebviewDeveloperTools(): Promise<void> {
+    if (!this.panel) {
+      const activeEditor = vscode.window.activeTextEditor;
+      await this.showPreview(activeEditor);
+    } else {
+      this.panel.reveal(this.panel.viewColumn, false);
+    }
+
+    try {
+      this.outputChannel.appendLine('[Preview] Opening Webview Developer Tools (internal, no external browser)...');
+      await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[Preview Error] Could not open Webview Developer Tools: ${msg}`);
+      vscode.window.showWarningMessage('Could not open Webview Developer Tools.');
+    }
+  }
+
+  public async startDebugSession(
+    document?: vscode.TextDocument,
+    componentName?: string,
+    browserTypeOverride?: DebugBrowserType
+  ): Promise<boolean> {
+    if (!this.viteServer.isRunning()) {
+      const port = await this.startServer();
+      if (!port) return false;
+    }
+
+    const active = this.getActiveComponent();
+    const compName = componentName || active?.compName || this.currentComponent?.name || 'Component';
+    const filePath = document?.fileName || active?.filePath || this.currentFilePath || '';
+
+    const workspaceFolder = filePath
+      ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))
+      : vscode.workspace.workspaceFolders?.[0];
+
+    const webRoot = workspaceFolder
+      ? workspaceFolder.uri.fsPath
+      : filePath
+      ? path.dirname(filePath)
+      : process.cwd();
+
+    const previewUrl = this.viteServer.getPreviewUrl();
+    const primaryBrowser = browserTypeOverride || this.resolveDebugBrowserType();
+    const fallbackBrowser = primaryBrowser === 'editor-browser'
+      ? detectInstalledBrowser()
+      : primaryBrowser === 'pwa-chrome' ? 'pwa-msedge' : 'pwa-chrome';
+
+    const debugConfig = buildComponentDebugConfig({
+      compName,
+      previewUrl,
+      webRoot,
+      browserType: primaryBrowser,
+    });
+
+    this.outputChannel.appendLine(`[Debug] Launching debugging session for <${compName} /> with ${primaryBrowser}...`);
+    this.outputChannel.appendLine(`[Debug] URL: ${previewUrl}`);
+    this.outputChannel.appendLine(`[Debug] webRoot: ${webRoot}`);
+
+    try {
+      let started = await vscode.debug.startDebugging(workspaceFolder, debugConfig);
+      if (!started) {
+        this.outputChannel.appendLine(`[Debug] Primary launch with ${primaryBrowser} was not accepted. Trying fallback: ${fallbackBrowser}...`);
+        const fallbackConfig = buildComponentDebugConfig({
+          compName,
+          previewUrl,
+          webRoot,
+          browserType: fallbackBrowser,
+        });
+        started = await vscode.debug.startDebugging(workspaceFolder, fallbackConfig);
+      }
+
+      if (started) {
+        this.outputChannel.appendLine(`[Debug] Successfully started debugging <${compName} />.`);
+        vscode.window.showInformationMessage(`Debugging <${compName} /> started. Set breakpoints in your component code.`);
+      } else {
+        this.outputChannel.appendLine(`[Debug] Debugger could not be started.`);
+        vscode.window.showWarningMessage(
+          `Could not start browser debugger. You can inspect elements via "Component Preview: Open Webview Developer Tools".`
+        );
+      }
+      return started;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.outputChannel.appendLine(`[Debug Error] Failed to launch debug session: ${msg}`);
+      try {
+        const fallbackConfig = buildComponentDebugConfig({
+          compName,
+          previewUrl,
+          webRoot,
+          browserType: fallbackBrowser,
+        });
+        const fallbackStarted = await vscode.debug.startDebugging(workspaceFolder, fallbackConfig);
+        if (fallbackStarted) {
+          this.outputChannel.appendLine(`[Debug] Fallback launch with ${fallbackBrowser} succeeded.`);
+          return true;
+        }
+      } catch {}
+      vscode.window.showErrorMessage(`Failed to start debugging: ${msg}`);
+      return false;
+    }
+  }
+
+  public async debugComponent(documentUri?: vscode.Uri, componentName?: string, line?: number): Promise<boolean> {
+    let editor: vscode.TextEditor | undefined;
+    if (documentUri) {
+      const doc = await vscode.workspace.openTextDocument(documentUri);
+      editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.One, false);
+    } else {
+      editor = vscode.window.activeTextEditor;
+    }
+
+    if (!editor) {
+      vscode.window.showInformationMessage('Open a JSX or TSX file to debug components.');
+      return false;
+    }
+
+    if (line !== undefined && line > 0) {
+      const targetLine = Math.max(line - 1, 0);
+      const pos = new vscode.Position(targetLine, 0);
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
+
+    const port = await this.startServer(editor);
+    if (!port) return false;
+
+    let targetCompName = componentName;
+    const scanResult = scanComponents(editor.document.getText(), editor.document.fileName, line);
+    let target = targetCompName ? scanResult.components.find((c) => c.name === targetCompName) : undefined;
+    if (!target) {
+      target = scanResult.targetComponent || scanResult.components[0];
+      if (target) {
+        targetCompName = target.name;
+      }
+    }
+
+    if (target) {
+      const allComponentNames = scanResult.components.map((c) => c.name);
+      await this.renderTargetComponent(editor.document, target, false, allComponentNames);
+    }
+
+    if (!this.panel) {
+      await this.showPreview(editor);
+    }
+
+    const config = vscode.workspace.getConfiguration('componentPreview');
+    const debugTarget = config.get<string>('debugTarget', 'devtools');
+    if (debugTarget === 'devtools') {
+      await this.openWebviewDeveloperTools();
+      return true;
+    } else if (debugTarget === 'integrated') {
+      return this.startDebugSession(editor.document, targetCompName, 'editor-browser');
+    }
+
+    return this.startDebugSession(editor.document, targetCompName);
+  }
+
+  public async debugPreview(editor?: vscode.TextEditor): Promise<boolean> {
+    const targetEditor = editor || vscode.window.activeTextEditor;
+    if (!targetEditor) {
+      if (this.viteServer.isRunning() && this.currentComponent) {
+        const config = vscode.workspace.getConfiguration('componentPreview');
+        const debugTarget = config.get<string>('debugTarget', 'devtools');
+        if (debugTarget === 'devtools') {
+          await this.openWebviewDeveloperTools();
+          return true;
+        } else if (debugTarget === 'integrated') {
+          return this.startDebugSession(undefined, this.currentComponent.name, 'editor-browser');
+        }
+        return this.startDebugSession(undefined, this.currentComponent.name);
+      }
+      vscode.window.showInformationMessage('Open a JSX or TSX file to debug components.');
+      return false;
+    }
+    return this.debugComponent(targetEditor.document.uri);
   }
 
   public dispose() {

@@ -59,7 +59,20 @@ export class PreviewCodeLensProvider implements vscode.CodeLensProvider {
           })
         );
 
-        // 2. Variants Information: Show variant count and names
+        // 2. Debug Action: Debug this component in VS Code with breakpoints
+        const showDebug = config.get<boolean>('showDebugCodeLens', true);
+        if (showDebug) {
+          codeLenses.push(
+            new vscode.CodeLens(range, {
+              title: `$(debug-alt) Debug <${comp.name} />`,
+              tooltip: `Launch debug session for <${comp.name} /> with VS Code breakpoints & stepping`,
+              command: 'componentPreview.debugComponent',
+              arguments: [document.uri, comp.name, comp.nameLine || comp.startLine],
+            })
+          );
+        }
+
+        // 3. Variants Information: Show variant count and names
         if (comp.meta.variants.length > 1) {
           const count = comp.meta.variants.length;
           const names = comp.meta.variants.map((v) => v.name).join(', ');
