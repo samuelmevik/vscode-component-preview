@@ -534,6 +534,21 @@ export class PreviewManager {
       return;
     }
 
+    // When locked, re-render the locked component by name instead of
+    // following the cursor — which might be inside a different sub-component.
+    if (this.isLocked && this.lockedFilePath && this.lockedComponentName) {
+      // Only update if the saved file is the locked file
+      if (document.fileName === this.lockedFilePath) {
+        const scanResult = scanComponents(document.getText(), document.fileName);
+        const lockedTarget = scanResult.components.find((c) => c.name === this.lockedComponentName);
+        if (lockedTarget) {
+          const allComponentNames = scanResult.components.map((c) => c.name);
+          await this.renderTargetComponent(document, lockedTarget, allComponentNames);
+        }
+      }
+      return;
+    }
+
     // Trigger update on save via Vite Hot Code Replacement
     if (activeEditor && activeEditor.document === document) {
       await this.updatePreviewForEditor(activeEditor);
