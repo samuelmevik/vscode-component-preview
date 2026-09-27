@@ -6,7 +6,7 @@ A high-performance VS Code extension providing live in-editor previews of React 
 
 ## ✨ Features
 
-- ⚡ **Instant In-Editor Preview**: Renders your JSX / TSX components in a live Webview pane without needing to start your entire web application.
+- ⚡ **Instant In-Editor Preview**: Renders your JSX / TSX components natively in VS Code's Integrated Browser without needing to start your entire web application or external windows.
 - 📱 **Responsive Viewport Presets**: Easily test components in **Responsive**, **Mobile** (375 × 667), **Tablet** (768 × 1024), and **Desktop** (1280 × 800) device frames with real dimensions.
 - 🌓 **Canvas Theme Modes**: Switch the preview canvas between **Dark**, **Light**, and **Transparency Checkerboard** backgrounds with one click.
 - 🔍 **Camera Navigation & Focal Scroll Zoom**: Smoothly zoom from 10% to 500% by scrolling your mouse wheel (anchored to your cursor). Freely pan the camera across large components via **Middle-click drag**, **Space + drag**, **background drag**, or the **Pan Tool (`H`)**. Includes instant **Fit to Screen** and **Reset Camera** buttons.
@@ -23,7 +23,8 @@ A high-performance VS Code extension providing live in-editor previews of React 
 - 🛑 **Full Server Lifecycle Control**: Turn off or restart the background Vite server anytime via the editor title bar, status bar, command palette, or in-preview header.
 - 🚨 **Visual Error Boundary & VS Code Problems Diagnostics**: Catches syntax or runtime exceptions gracefully with clean stack traces and a retry button, and automatically surfaces runtime errors into VS Code's **Problems panel** with inline squigglies under the exact line in your editor.
 - ⚡ **Interactive In-Editor CodeLens**: Action buttons (`▶ Preview <Component />`, `🐞 Debug <Component />`, `🔄 N Variants`, `🔒 Locked`) appear directly above component declarations and `/* @preview */` comment blocks for one-click preview launches.
-- 🐞 **Live Component Debugging with Breakpoints**: Debug components directly from VS Code with source-level breakpoints, call stacks, variable inspection, and step-through debugging via Chrome or Edge. Launch via one-click CodeLens, editor title button, preview header, or shortcut (`Ctrl+Alt+D`). Includes quick access to Webview Developer Tools and `debugger;` triggers.
+- 🐞 **Native In-Editor Debugging with Gutter Breakpoints**: Debug components directly inside VS Code with source-level gutter breakpoints, call stacks, variable inspection, and step-through debugging via VS Code's `editor-browser` engine. Launch via one-click CodeLens, editor title button, preview header, or shortcut (`Ctrl+Alt+D`).
+- 🖥️ **Pure Integrated Browser Architecture**: Pure in-editor preview without custom Webview wrappers or external windows. Requires VS Code 1.112+ (displays an actionable update toaster notification on older VS Code versions).
 - 🌗 **VS Code Theme Synchronization**: Automatically matches the preview canvas, top navigation bar, and controls with your active VS Code color theme (`Auto`, `Dark`, `Light`, `Checkerboard`).
 
 ---

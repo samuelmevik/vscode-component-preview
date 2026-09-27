@@ -1,6 +1,14 @@
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+
+function getVsCode(): typeof vscode | null {
+  try {
+    return require('vscode');
+  } catch {
+    return null;
+  }
+}
 
 export function detectInstalledBrowser(platform = process.platform): 'pwa-chrome' | 'pwa-msedge' {
   if (platform === 'win32') {
@@ -24,16 +32,49 @@ export function detectInstalledBrowser(platform = process.platform): 'pwa-chrome
   return 'pwa-chrome';
 }
 
+export function isIntegratedBrowserSupported(version?: string): boolean {
+  try {
+    const v = version ?? getVsCode()?.version ?? '1.112.0';
+    const clean = String(v).replace(/^[^\d]*/, '');
+    const parts = clean.split('.').map((p) => parseInt(p, 10));
+    const major = parts[0] || 0;
+    const minor = parts[1] || 0;
+    // Integrated browser was added in VS Code 1.112
+    if (major > 1) return true;
+    return major === 1 && minor >= 112;
+  } catch {
+    return false;
+  }
+}
+
+export function showUnsupportedVersionToast(version?: string): void {
+  const vsc = getVsCode();
+  if (!vsc) return;
+  const currentVersion = version ?? vsc.version ?? 'unknown';
+  vsc.window
+    ?.showErrorMessage(
+      `Component Preview requires VS Code 1.112 or newer for the Integrated Browser. Your current version is ${currentVersion}. Please update VS Code.`,
+      'Update VS Code',
+      'Learn More'
+    )
+    ?.then((choice) => {
+      if (choice === 'Update VS Code') {
+        vsc.env.openExternal(vsc.Uri.parse('https://code.visualstudio.com/updates'));
+      } else if (choice === 'Learn More') {
+        vsc.env.openExternal(vsc.Uri.parse('https://code.visualstudio.com/docs/debugtest/integrated-browser'));
+      }
+    });
+}
+
 export type DebugBrowserType = 'editor-browser' | 'pwa-chrome' | 'pwa-msedge';
 
 export function resolveDebugBrowserType(
-  configuredPref: string = 'auto',
+  configuredPref: string = 'integrated',
   platform = process.platform
 ): DebugBrowserType {
-  if (configuredPref === 'integrated' || configuredPref === 'editor-browser') return 'editor-browser';
   if (configuredPref === 'chrome') return 'pwa-chrome';
   if (configuredPref === 'edge') return 'pwa-msedge';
-  return detectInstalledBrowser(platform);
+  return 'editor-browser';
 }
 
 export interface ComponentDebugConfigOptions {
@@ -47,7 +88,7 @@ export interface ComponentDebugConfigOptions {
 export function buildComponentDebugConfig(
   options: ComponentDebugConfigOptions
 ): vscode.DebugConfiguration {
-  const browserType = options.browserType || 'pwa-chrome';
+  const browserType = options.browserType || 'editor-browser';
   const cleanWebRoot = options.webRoot.replace(/\\/g, '/');
 
   return {

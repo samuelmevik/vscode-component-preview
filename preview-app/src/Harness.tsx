@@ -256,17 +256,26 @@ export const Harness: React.FC<HarnessProps> = ({
     // Listen for Vite HMR updates to clear error states when code is saved
     const hot = (import.meta as any).hot;
     let handleBeforeUpdate: (() => void) | undefined;
+    let handleThemeChange: ((data: any) => void) | undefined;
     if (hot && typeof hot.on === 'function') {
       handleBeforeUpdate = () => {
         setRemountCount((prev) => prev + 1);
       };
       hot.on('vite:beforeUpdate', handleBeforeUpdate);
+
+      handleThemeChange = (data: { themeKind?: 'dark' | 'light' }) => {
+        if (data?.themeKind) {
+          setVsCodeTheme(data.themeKind);
+        }
+      };
+      hot.on('preview:theme', handleThemeChange);
     }
 
     return () => {
       window.removeEventListener('message', handleMessage);
-      if (hot && handleBeforeUpdate && typeof hot.off === 'function') {
-        hot.off('vite:beforeUpdate', handleBeforeUpdate);
+      if (hot && typeof hot.off === 'function') {
+        if (handleBeforeUpdate) hot.off('vite:beforeUpdate', handleBeforeUpdate);
+        if (handleThemeChange) hot.off('preview:theme', handleThemeChange);
       }
     };
   }, []);
@@ -337,12 +346,24 @@ export const Harness: React.FC<HarnessProps> = ({
     } catch {}
   }, []);
 
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      const lockPrefix = isLocked ? '🔒 ' : '';
+      document.title = `${lockPrefix}Preview: <${componentName} />`;
+    }
+  }, [componentName, isLocked]);
+
   const handleSwitchComponent = useCallback((newCompName: string) => {
     setComponentName(newCompName);
     window.parent.postMessage(
       { type: 'SWITCH_COMPONENT', payload: { componentName: newCompName } },
       '*'
     );
+    fetch('/__preview_api/switch_component', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ componentName: newCompName }),
+    }).catch(() => {});
   }, []);
 
   const addActionLog = useCallback((item: ActionLogItem) => {

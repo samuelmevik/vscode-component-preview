@@ -32,7 +32,7 @@
   - [3.3 Cursor-Based Targeting](#33-cursor-based-targeting)
 - [4. Component Detection](#4-component-detection)
 - [5. CodeLens](#5-codelens)
-- [6. Preview Panel & Webview](#6-preview-panel--webview)
+- [6. Preview Architecture — Pure Integrated Browser](#6-preview-architecture--pure-integrated-browser)
 - [7. Vite Dev Server & HMR](#7-vite-dev-server--hmr)
 - [8. Canvas Controls](#8-canvas-controls)
 - [9. Theme System](#9-theme-system)
@@ -871,23 +871,23 @@ CodeLens refreshes automatically when you save the file or when the preview stat
 
 ---
 
-## 6. Preview Panel & Webview
+## 6. Preview Architecture — Pure Integrated Browser
 
-The preview renders in a VS Code Webview panel that opens in `ViewColumn.Beside`. Architecture:
+The preview renders natively in VS Code's **Integrated Browser** (`editor-browser` / `workbench.action.browser.open` / `simpleBrowser.show`), eliminating external windows and custom Webview wrappers:
 
 ```
 ┌─────────────────────────┐     ┌─────────────────────────┐
-│   VS Code Extension     │     │   Webview Panel         │
-│   (extension.ts)        │     │   (iframe)              │
+│   VS Code Extension     │     │   Integrated Browser    │
+│   (extension.ts)        │     │   (Native Editor Tab)   │
 │                         │     │                         │
 │   PreviewManager        │◄───►│   Vite Dev Server       │
 │     ├─ ViteServer       │     │   /__preview__          │
 │     ├─ AST Scanner      │     │     └─ Harness.tsx      │
 │     ├─ Comment Parser   │     │       ├─ Canvas         │
-│     └─ CodeLens Provider│     │       ├─ Toolbar        │
-│                         │     │       ├─ ErrorBoundary  │
-│   postMessage ◄────────►│     │       ├─ Redux Provider │
-│                         │     │       └─ ActionPanel    │
+│     ├─ CodeLens Provider│     │       ├─ Toolbar        │
+│     └─ DebugConfig      │     │       ├─ ErrorBoundary  │
+│                         │     │       ├─ Redux Provider │
+│   Vite HMR & HTTP API   │     │       └─ ActionPanel    │
 └─────────────────────────┘     └─────────────────────────┘
 ```
 
@@ -896,6 +896,10 @@ The Vite server generates a **virtual entry module** at `/__preview_entry__.tsx`
 2. Imports the Harness renderer
 3. Imports any `storePath` and `wrapperPath` modules
 4. Passes all variant data, props, and modules to the Harness
+
+### Requirements & Version Compatibility
+- **VS Code 1.112 or newer**: Required for the native Integrated Browser tab and `editor-browser` debugging type.
+- **Older VS Code Versions**: If launched on an older VS Code version (`< 1.112`), the extension displays an actionable error notification (toaster) prompting the user to update VS Code with a direct link to the update notes.
 
 ---
 

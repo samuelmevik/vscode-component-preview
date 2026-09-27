@@ -296,6 +296,7 @@ export class PreviewViteServer {
   public onCopyToClipboard?: (text: string) => Promise<void> | void;
   public onStartDebugRequested?: (componentName?: string, target?: 'devtools' | 'integrated' | 'browser') => void;
   public onOpenDevToolsRequested?: () => void;
+  public onSwitchComponentRequested?: (componentName: string) => void;
 
   constructor(extensionPath: string, port = 4545) {
     this.extensionPath = extensionPath;
@@ -422,6 +423,22 @@ export class PreviewViteServer {
                 const data = body ? JSON.parse(body) : {};
                 if (typeof data.text === 'string' && this.onCopyToClipboard) {
                   await this.onCopyToClipboard(data.text);
+                }
+              } catch {}
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: true }));
+            });
+            return;
+          }
+
+          if (url.startsWith('/__preview_api/switch_component') && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk; });
+            req.on('end', () => {
+              try {
+                const data = body ? JSON.parse(body) : {};
+                if (data.componentName) {
+                  this.onSwitchComponentRequested?.(data.componentName);
                 }
               } catch {}
               res.setHeader('Content-Type', 'application/json');
@@ -727,6 +744,17 @@ export class PreviewViteServer {
     }
 
     return { filePath, line, column };
+  }
+
+  public broadcastThemeChange(themeKind: 'dark' | 'light'): void {
+    const hot = (this.server as any)?.hot || (this.server as any)?.ws;
+    if (hot && typeof hot.send === 'function') {
+      hot.send({
+        type: 'custom',
+        event: 'preview:theme',
+        data: { themeKind },
+      });
+    }
   }
 
   public async stop(): Promise<void> {

@@ -6,6 +6,7 @@ import {
   detectInstalledBrowser,
   resolveDebugBrowserType,
   buildComponentDebugConfig,
+  isIntegratedBrowserSupported,
   ComponentPreviewDebugConfigProvider,
 } from '../src/debug/debugConfigProvider';
 import { scanComponents } from '../src/parser/astScanner';
@@ -284,6 +285,36 @@ async function testViteServerDebugEndpoints() {
     assert.strictEqual(devtoolsRequested, true, 'onOpenDevToolsRequested callback should be triggered');
     console.log('✅ /__preview_api/open_devtools endpoint triggered onOpenDevToolsRequested()');
 
+    // 3. Post to /__preview_api/switch_component
+    let switchedComp: string | undefined;
+    server.onSwitchComponentRequested = (comp) => {
+      switchedComp = comp;
+    };
+    await new Promise<void>((resolve, reject) => {
+      const payload = JSON.stringify({ componentName: 'CatGallery' });
+      const req = http.request(
+        `http://127.0.0.1:${port}/__preview_api/switch_component`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload),
+          },
+        },
+        (res) => {
+          if (res.statusCode === 200) resolve();
+          else reject(new Error(`switch_component returned status ${res.statusCode}`));
+        }
+      );
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(switchedComp, 'CatGallery', 'onSwitchComponentRequested should receive target component');
+    console.log('✅ /__preview_api/switch_component endpoint triggered onSwitchComponentRequested("CatGallery")');
+
   } finally {
     await server.stop();
   }
@@ -303,8 +334,26 @@ function testConsoleDebuggerEvaluation() {
   console.log('✅ REPL executed "$debug()" helper function successfully');
 }
 
+function testIntegratedBrowserVersionSupport() {
+  console.log('\n--- Testing Integrated Browser Version Support Logic ---');
+
+  // Versions >= 1.112 must return true
+  assert.strictEqual(isIntegratedBrowserSupported('1.112.0'), true, 'VS Code 1.112.0 should be supported');
+  assert.strictEqual(isIntegratedBrowserSupported('1.112.1-insider'), true, 'VS Code 1.112.1-insider should be supported');
+  assert.strictEqual(isIntegratedBrowserSupported('1.115.0'), true, 'VS Code 1.115.0 should be supported');
+  assert.strictEqual(isIntegratedBrowserSupported('2.0.0'), true, 'VS Code 2.0.0 should be supported');
+
+  // Older versions < 1.112 must return false
+  assert.strictEqual(isIntegratedBrowserSupported('1.111.0'), false, 'VS Code 1.111.0 should be unsupported');
+  assert.strictEqual(isIntegratedBrowserSupported('1.90.0'), false, 'VS Code 1.90.0 should be unsupported');
+  assert.strictEqual(isIntegratedBrowserSupported('1.85.0'), false, 'VS Code 1.85.0 should be unsupported');
+
+  console.log('✅ Integrated Browser version check boundary conditions verified (>= 1.112.0)');
+}
+
 async function runAll() {
   testBrowserDetectionLogic();
+  testIntegratedBrowserVersionSupport();
   testDebugConfigBuilder();
   testDebugCodeLensGeneration();
   testConsoleDebuggerEvaluation();

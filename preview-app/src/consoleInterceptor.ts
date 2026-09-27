@@ -284,6 +284,17 @@ function broadcastConsoleItem(item: ActionLogItem, rawArgs?: any[]) {
       },
       '*'
     );
+    try {
+      fetch('/__preview_api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level: item.level || 'info',
+          text,
+          timestamp: item.timestamp,
+        }),
+      }).catch(() => {});
+    } catch {}
   } catch {}
 }
 

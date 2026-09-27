@@ -3,17 +3,18 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { PreviewViteServer } from './server/viteServer';
 import { scanComponents, ScannedComponent } from './parser/astScanner';
-import { getWebviewContent, getServerStoppedHtml } from './webviewHtml';
 import { PreviewCodeLensProvider } from './codelens/previewCodeLensProvider';
 import {
   resolveDebugBrowserType,
   detectInstalledBrowser,
   buildComponentDebugConfig,
+  isIntegratedBrowserSupported,
+  showUnsupportedVersionToast,
   DebugBrowserType,
 } from './debug/debugConfigProvider';
 
 export class PreviewManager {
-  private panel: vscode.WebviewPanel | null = null;
+  private isPreviewActive: boolean = false;
   private viteServer: PreviewViteServer;
   private extensionContext: vscode.ExtensionContext;
   private disposables: vscode.Disposable[] = [];
@@ -64,20 +65,16 @@ export class PreviewManager {
       this.stopServer();
     };
 
-    this.viteServer.onStartDebugRequested = async (compName, target) => {
-      const config = vscode.workspace.getConfiguration('componentPreview');
-      const debugTarget = target || config.get<string>('debugTarget', 'devtools');
-      if (debugTarget === 'integrated') {
-        await this.startDebugSession(undefined, compName, 'editor-browser');
-      } else if (debugTarget === 'browser') {
-        await this.startDebugSession(undefined, compName);
-      } else {
-        await this.openWebviewDeveloperTools();
-      }
+    this.viteServer.onStartDebugRequested = async (compName) => {
+      await this.startDebugSession(undefined, compName);
     };
 
     this.viteServer.onOpenDevToolsRequested = async () => {
       await this.openWebviewDeveloperTools();
+    };
+
+    this.viteServer.onSwitchComponentRequested = (compName) => {
+      this.switchComponent(compName);
     };
 
     this.viteServer.onNavigateRequested = (filePath, line, column) => {
@@ -114,17 +111,6 @@ export class PreviewManager {
         this.outputChannel.appendLine(`[Preview] Failed to copy to clipboard: ${err}`);
       }
     };
-
-    vscode.workspace.onDidChangeConfiguration(
-      (e) => {
-        if (e.affectsConfiguration('componentPreview.port')) {
-          const newPort = vscode.workspace.getConfiguration('componentPreview').get<number>('port', 4545);
-          this.viteServer.setDefaultPort(newPort);
-        }
-      },
-      null,
-      this.disposables
-    );
 
     vscode.window.onDidChangeActiveTextEditor(
       (editor) => this.handleActiveEditorChange(editor),
@@ -167,61 +153,51 @@ export class PreviewManager {
     const editor = targetEditor || vscode.window.activeTextEditor;
     let workspaceRoot: string;
 
-    if (editor) {
-      const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-      workspaceRoot = workspaceFolder ? workspaceFolder.uri.fsPath : path.dirname(editor.document.fileName);
+    if (editor && editor.document.uri.scheme === 'file') {
+      const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+      workspaceRoot = folder ? folder.uri.fsPath : path.dirname(editor.document.fileName);
     } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
       workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
     } else {
-      workspaceRoot = process.cwd();
+      vscode.window.showErrorMessage('No workspace folder open. Open a project folder to preview components.');
+      return null;
     }
 
     try {
+      this.outputChannel.appendLine(`[Preview] Starting background Vite server in ${workspaceRoot}...`);
       const port = await this.viteServer.start(workspaceRoot);
-      this.outputChannel.appendLine(`[Preview] Vite dev server ready on port ${port}`);
-      this.statusBarItem.text = `$(server) Preview: ${port}`;
-      this.statusBarItem.tooltip = `Component Preview server running on http://127.0.0.1:${port} (Click to stop server)`;
-      this.statusBarItem.command = 'componentPreview.stopServer';
+      this.outputChannel.appendLine(`[Preview] Vite dev server running at ${this.viteServer.getPreviewUrl()}`);
+
+      this.statusBarItem.text = `$(play) Preview :${port}`;
+      this.statusBarItem.tooltip = `React Component Preview server running on port ${port}. Click to stop.`;
       this.statusBarItem.show();
       this.updateServerRunningContext(true);
+
       return port;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[Preview Error] Failed to start Vite server: ${msg}`);
-      vscode.window.showErrorMessage(`Failed to start preview server: ${msg}`);
+      this.outputChannel.appendLine(`[Preview Error] Failed to start Vite dev server: ${msg}`);
+      vscode.window.showErrorMessage(`Failed to start component preview server: ${msg}`);
+      this.statusBarItem.hide();
+      this.updateServerRunningContext(false);
       return null;
-    }
-  }
-
-  public async startServerInteractive(): Promise<void> {
-    if (this.isServerRunning()) {
-      vscode.window.showInformationMessage(`Component preview server is already running on port ${this.getServerPort()}.`);
-      return;
-    }
-    const port = await this.startServer();
-    if (port) {
-      vscode.window.showInformationMessage(`Component preview server started on port ${port}.`);
     }
   }
 
   public async stopServer(): Promise<void> {
     if (!this.viteServer.isRunning()) {
-      vscode.window.showInformationMessage('Component preview server is not currently running.');
+      this.outputChannel.appendLine('[Preview] Server is not running.');
       return;
     }
 
     try {
       await this.viteServer.stop();
+      this.isPreviewActive = false;
       this.diagnosticCollection.clear();
       this.codeLensProvider.refresh();
       this.outputChannel.appendLine('[Preview] Vite dev server stopped.');
       this.statusBarItem.hide();
       this.updateServerRunningContext(false);
-
-      if (this.panel) {
-        this.panel.webview.html = getServerStoppedHtml();
-      }
-
       vscode.window.showInformationMessage('Component preview server stopped.');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -239,14 +215,58 @@ export class PreviewManager {
     }
     const port = await this.startServer();
     if (port) {
-      if (this.panel && vscode.window.activeTextEditor) {
-        await this.updatePreviewForEditor(vscode.window.activeTextEditor, true);
+      if (this.isPreviewActive && vscode.window.activeTextEditor) {
+        await this.updatePreviewForEditor(vscode.window.activeTextEditor);
       }
       vscode.window.showInformationMessage(`Component preview server restarted on port ${port}.`);
     }
   }
 
+  public async startServerInteractive(): Promise<void> {
+    if (this.viteServer.isRunning()) {
+      vscode.window.showInformationMessage(`Component preview server is already running on port ${this.viteServer.getPort()}.`);
+      return;
+    }
+    const port = await this.startServer();
+    if (port) {
+      vscode.window.showInformationMessage(`Component preview server started on port ${port}.`);
+    }
+  }
+
+  public async openIntegratedBrowserTab(url: string, viewColumn = vscode.ViewColumn.Beside): Promise<boolean> {
+    const uri = vscode.Uri.parse(url);
+
+    // 1. Try VS Code 1.112+ native integrated browser command
+    try {
+      await vscode.commands.executeCommand('workbench.action.browser.open', url);
+      return true;
+    } catch {}
+
+    try {
+      await vscode.commands.executeCommand('workbench.action.browser.open', uri);
+      return true;
+    } catch {}
+
+    // 2. Try Simple Browser
+    try {
+      await vscode.commands.executeCommand('simpleBrowser.show', uri, { viewColumn });
+      return true;
+    } catch {}
+
+    try {
+      await vscode.commands.executeCommand('simpleBrowser.show', url, { viewColumn });
+      return true;
+    } catch {}
+
+    return false;
+  }
+
   public async showPreview(editor?: vscode.TextEditor): Promise<void> {
+    if (!isIntegratedBrowserSupported()) {
+      showUnsupportedVersionToast();
+      return;
+    }
+
     const targetEditor = editor || vscode.window.activeTextEditor;
     if (!targetEditor) {
       vscode.window.showInformationMessage('Open a JSX or TSX file to preview components.');
@@ -255,139 +275,30 @@ export class PreviewManager {
 
     const document = targetEditor.document;
     if (!document.fileName.endsWith('.tsx') && !document.fileName.endsWith('.jsx')) {
-      vscode.window.showInformationMessage('Component preview only supports .jsx and .tsx files.');
+      vscode.window.showInformationMessage('Component Preview only supports JSX and TSX files.');
       return;
     }
 
-    this.outputChannel.appendLine(`[Preview] Opening preview for ${document.fileName}`);
+    this.outputChannel.appendLine(`[Preview] Opening Integrated Browser preview for ${document.fileName}`);
 
     const port = await this.startServer(targetEditor);
     if (!port) {
       return;
     }
 
-    const isNewPanel = !this.panel;
+    this.isPreviewActive = true;
+    await this.updatePreviewForEditor(targetEditor);
 
-    if (!this.panel) {
-      this.panel = vscode.window.createWebviewPanel(
-        'reactComponentPreview',
-        'Component Preview',
-        vscode.ViewColumn.Beside,
-        {
-          enableScripts: true,
-          retainContextWhenHidden: true,
-          localResourceRoots: [vscode.Uri.file(this.extensionContext.extensionPath)],
-        }
-      );
+    const previewUrl = this.viteServer.getPreviewUrl();
+    await this.openIntegratedBrowserTab(previewUrl);
 
-      this.panel.onDidDispose(async () => {
-        this.panel = null;
-        const config = vscode.workspace.getConfiguration('componentPreview');
-        const autoStop = config.get<boolean>('stopServerOnClose', false);
-        if (autoStop && this.viteServer.isRunning()) {
-          await this.stopServer();
-        }
-      }, null, this.disposables);
-
-      this.panel.webview.onDidReceiveMessage(async (message) => {
-        if (message.type === 'TOGGLE_LOCK') {
-          this.toggleLock(message.payload?.locked);
-        } else if (message.type === 'START_SERVER') {
-          await this.showPreview();
-        } else if (message.type === 'STOP_SERVER') {
-          await this.stopServer();
-        } else if (message.type === 'START_DEBUG') {
-          const config = vscode.workspace.getConfiguration('componentPreview');
-          const debugTarget = message.payload?.target || config.get<string>('debugTarget', 'devtools');
-          if (debugTarget === 'browser') {
-            await this.startDebugSession(undefined, message.payload?.componentName);
-          } else {
-            await this.openWebviewDeveloperTools();
-          }
-        } else if (message.type === 'OPEN_DEVTOOLS') {
-          await this.openWebviewDeveloperTools();
-        } else if (message.type === 'CONSOLE_LOG') {
-          const { level, text, timestamp } = message.payload || {};
-          const levelTag = level ? `[${level.toUpperCase()}]` : '[LOG]';
-          this.outputChannel.appendLine(`[Console ${timestamp || ''}] ${levelTag} ${text}`);
-        } else if (message.type === 'RUNTIME_ERROR') {
-          let { message: errMsg, source, location, stack, timestamp } = message.payload || {};
-          if (location && !location.originalResolved && this.viteServer.isRunning()) {
-            const resolved = await this.viteServer.resolveOriginalPosition(
-              location.filePath,
-              location.line,
-              location.column || 1
-            );
-            location = {
-              ...location,
-              filePath: resolved.filePath,
-              fileName: path.basename(resolved.filePath),
-              line: resolved.line,
-              column: resolved.column,
-              originalResolved: true,
-            };
-          }
-          const locStr = location ? ` at ${location.fileName}:${location.line}:${location.column}` : '';
-          this.outputChannel.appendLine(`[Runtime Error ${timestamp || ''}] [${(source || 'error').toUpperCase()}] ${errMsg}${locStr}`);
-          if (stack) {
-            this.outputChannel.appendLine(stack);
-          }
-          this.reportRuntimeDiagnostic(errMsg, source, location);
-        } else if (message.type === 'RUNTIME_ERROR_UPDATE') {
-          const { location } = message.payload || {};
-          if (location) {
-            this.outputChannel.appendLine(
-              `[Runtime Error Exact Location] ${location.fileName}:${location.line}:${location.column}`
-            );
-            this.reportRuntimeDiagnostic(undefined, undefined, location);
-          }
-        } else if (message.type === 'SWITCH_COMPONENT') {
-          const targetName = message.payload?.componentName;
-          const editor = vscode.window.activeTextEditor;
-          if (editor && targetName && editor.document.fileName === this.currentFilePath) {
-            const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
-            const target = scanResult.components.find((c) => c.name === targetName);
-            if (target) {
-              const allComponentNames = scanResult.components.map((c) => c.name);
-              await this.renderTargetComponent(editor.document, target, false, allComponentNames);
-            }
-          }
-        } else if (message.type === 'NAVIGATE_TO_SOURCE') {
-          const { filePath, line, column, originalResolved } = message.payload || {};
-          if (filePath) {
-            await this.navigateToSource(filePath, line, column, originalResolved);
-          }
-        } else if (message.type === 'COPY_TO_CLIPBOARD') {
-          const text = message.payload?.text;
-          if (typeof text === 'string') {
-            try {
-              await vscode.env.clipboard.writeText(text);
-            } catch (err) {
-              this.outputChannel.appendLine(`[Preview] Failed to copy to clipboard: ${err}`);
-            }
-          }
-        }
-      }, null, this.disposables);
-    }
-
-    if (isNewPanel) {
-      this.panel.reveal(vscode.ViewColumn.Beside, false);
-      const config = vscode.workspace.getConfiguration('componentPreview');
-      const lockGroup = config.get<boolean>('lockEditorGroup', true);
-      if (lockGroup) {
+    const config = vscode.workspace.getConfiguration('componentPreview');
+    const lockGroup = config.get<boolean>('lockEditorGroup', true);
+    if (lockGroup) {
+      try {
         await vscode.commands.executeCommand('workbench.action.lockEditorGroup');
-      }
-      if (targetEditor) {
-        await vscode.window.showTextDocument(targetEditor.document, targetEditor.viewColumn ?? vscode.ViewColumn.One, false);
-      }
-    } else {
-      this.panel.reveal(this.panel.viewColumn || vscode.ViewColumn.Beside, true);
-      if (this.isLocked && this.lockedFilePath && this.lockedFilePath !== document.fileName) {
-        this.toggleLock(false);
-      }
+      } catch {}
     }
-
-    await this.updatePreviewForEditor(targetEditor, true);
   }
 
   public toggleLock(forceState?: boolean): void {
@@ -407,7 +318,7 @@ export class PreviewManager {
       this.lockedComponentName = null;
       vscode.window.showInformationMessage('Preview unlocked');
       if (vscode.window.activeTextEditor) {
-        this.updatePreviewForEditor(vscode.window.activeTextEditor, true);
+        this.updatePreviewForEditor(vscode.window.activeTextEditor);
       }
     }
 
@@ -417,18 +328,6 @@ export class PreviewManager {
   private updateLockStateInUI() {
     vscode.commands.executeCommand('setContext', 'componentPreview.isLocked', this.isLocked);
     this.codeLensProvider?.refresh();
-
-    if (this.panel && this.currentComponent) {
-      const lockPrefix = this.isLocked ? '🔒 ' : '';
-      this.panel.title = `${lockPrefix}Preview: <${this.currentComponent.name} />`;
-
-      this.panel.webview.postMessage({
-        type: 'SYNC_LOCK',
-        payload: {
-          locked: this.isLocked,
-        },
-      });
-    }
 
     const state = this.viteServer.getState();
     if (state) {
@@ -441,7 +340,7 @@ export class PreviewManager {
 
   public async refreshPreview(): Promise<void> {
     if (vscode.window.activeTextEditor) {
-      await this.updatePreviewForEditor(vscode.window.activeTextEditor, true);
+      await this.updatePreviewForEditor(vscode.window.activeTextEditor);
     }
   }
 
@@ -453,21 +352,33 @@ export class PreviewManager {
       }
     }
     const url = this.viteServer.getPreviewUrl();
-    await vscode.env.openExternal(vscode.Uri.parse(url));
+    vscode.env.openExternal(vscode.Uri.parse(url));
+  }
+
+  public isComponentLocked(filePath: string, compName: string): boolean {
+    if (!this.isLocked) return false;
+    return this.lockedFilePath === filePath && this.lockedComponentName === compName;
+  }
+
+  public getActiveComponent(): { filePath: string; compName: string } | null {
+    if (this.currentComponent && this.currentFilePath) {
+      return {
+        filePath: this.currentFilePath,
+        compName: this.currentComponent.name,
+      };
+    }
+    return null;
   }
 
   /**
-   * Renders the given target component in the preview panel and synchronizes Vite server state.
+   * Updates state in the background Vite server to render target component.
+   * Vite HMR hot-swaps the component in the Integrated Browser tab in real-time.
    */
   private async renderTargetComponent(
     document: vscode.TextDocument,
     target: ScannedComponent,
-    reloadWebview: boolean,
     allComponents?: string[]
   ): Promise<void> {
-    const fileChanged = this.currentFilePath !== document.fileName;
-    const compChanged = this.currentComponent?.name !== target.name;
-
     this.outputChannel.appendLine(`[Preview] Active component: <${target.name} /> (${target.meta.variants.length} variant(s))`);
 
     this.currentFilePath = document.fileName;
@@ -486,35 +397,9 @@ export class PreviewManager {
       allComponents,
       isLocked: this.isLocked,
     });
-
-    if (this.panel) {
-      const lockPrefix = this.isLocked ? '🔒 ' : '';
-      this.panel.title = `${lockPrefix}Preview: <${target.name} />`;
-
-      if (reloadWebview || fileChanged || compChanged) {
-        const rawPreviewUrl = this.viteServer.getPreviewUrl();
-        const externalUri = await vscode.env.asExternalUri(vscode.Uri.parse(rawPreviewUrl));
-        const cacheBustedUrl = `${externalUri.toString()}?t=${Date.now()}`;
-        this.panel.webview.html = getWebviewContent(cacheBustedUrl, target.name);
-      } else {
-        this.panel.webview.postMessage({
-          type: 'SYNC_PREVIEW',
-          payload: {
-            currentFilePath: document.fileName,
-            componentName: target.name,
-            componentStartLine: target.startLine,
-            commentStartLine: target.commentStartLine,
-            variants: target.meta.variants,
-            allComponents,
-            isLocked: this.isLocked,
-            themeKind: this.getEffectiveThemeKind(),
-          },
-        });
-      }
-    }
   }
 
-  private async updatePreviewForEditor(editor: vscode.TextEditor, reloadWebview = false): Promise<void> {
+  private async updatePreviewForEditor(editor: vscode.TextEditor): Promise<void> {
     const document = editor.document;
     if (!document.fileName.endsWith('.tsx') && !document.fileName.endsWith('.jsx')) {
       return;
@@ -525,51 +410,22 @@ export class PreviewManager {
 
     if (!scanResult.targetComponent) {
       this.outputChannel.appendLine(`[Preview] No React component found in ${document.fileName}`);
-      if (this.panel) {
-        const fileName = path.basename(document.fileName);
-        const escapedPath = JSON.stringify(document.fileName.replace(/\\/g, '/'));
-        this.panel.webview.html = `<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { background: #1e1e1e; color: #cccccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; box-sizing: border-box; padding: 24px; text-align: center; }
-    .card { background: #252526; border: 1px solid #3c3c3c; border-radius: 8px; padding: 28px 32px; max-width: 440px; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
-    h3 { margin: 0 0 10px 0; color: #f14c4c; font-size: 15px; }
-    p { margin: 0 0 20px 0; font-size: 13px; color: #999; line-height: 1.5; }
-    button { background: #0e639c; color: white; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s ease; }
-    button:hover { background: #1177bb; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h3>No React Component Detected</h3>
-    <p>Could not detect an exported React component in <strong>${fileName}</strong>. Check for syntax errors or export statements.</p>
-    <button onclick="vscode.postMessage({ type: 'NAVIGATE_TO_SOURCE', payload: { filePath: ${escapedPath}, line: 1 } })">
-      Open ${fileName} in Editor
-    </button>
-  </div>
-  <script>
-    const vscode = acquireVsCodeApi();
-  </script>
-</body>
-</html>`;
-      }
       return;
     }
 
     const allComponentNames = scanResult.components.map((c) => c.name);
-    await this.renderTargetComponent(document, scanResult.targetComponent, reloadWebview, allComponentNames);
+    await this.renderTargetComponent(document, scanResult.targetComponent, allComponentNames);
   }
 
   private handleActiveEditorChange(editor: vscode.TextEditor | undefined) {
-    if (this.isLocked || this.isNavigatingToSource || !editor || !this.panel) {
+    if (this.isLocked || this.isNavigatingToSource || !editor || !this.isPreviewActive) {
       return;
     }
-    this.updatePreviewForEditor(editor, true);
+    this.updatePreviewForEditor(editor);
   }
 
   private handleSelectionChange(event: vscode.TextEditorSelectionChangeEvent) {
-    if (!this.panel || this.isLocked) return;
+    if (!this.isPreviewActive || this.isLocked) return;
     const editor = event.textEditor;
 
     // Check if cursor moved to a different component in the same file
@@ -578,7 +434,7 @@ export class PreviewManager {
       const scanResult = scanComponents(editor.document.getText(), editor.document.fileName, cursorLine);
       if (scanResult.targetComponent && scanResult.targetComponent.name !== this.currentComponent?.name) {
         const allComponentNames = scanResult.components.map((c) => c.name);
-        this.renderTargetComponent(editor.document, scanResult.targetComponent, false, allComponentNames);
+        this.renderTargetComponent(editor.document, scanResult.targetComponent, allComponentNames);
       }
     }
   }
@@ -598,7 +454,7 @@ export class PreviewManager {
 
     const activeEditor = vscode.window.activeTextEditor;
 
-    if (!this.panel) {
+    if (!this.isPreviewActive) {
       const config = vscode.workspace.getConfiguration('componentPreview');
       const autoOpen = config.get<boolean>('autoOpenOnSave', false);
       if (autoOpen && activeEditor && activeEditor.document === document) {
@@ -607,65 +463,31 @@ export class PreviewManager {
       return;
     }
 
-    // When preview panel is open, trigger hot code replacement on save without full webview reload
-    if (this.isLocked) {
-      if (document.fileName === this.lockedFilePath && this.lockedComponentName) {
-        const scanResult = scanComponents(document.getText(), document.fileName);
-        const lockedComp = scanResult.components.find((c) => c.name === this.lockedComponentName);
-        if (lockedComp) {
-          const allComponentNames = scanResult.components.map((c) => c.name);
-          await this.renderTargetComponent(document, lockedComp, false, allComponentNames);
-        }
-      }
-      return;
-    }
-
-    if (this.currentFilePath === document.fileName || (activeEditor && activeEditor.document === document)) {
-      if (activeEditor && activeEditor.document === document) {
-        await this.updatePreviewForEditor(activeEditor, false);
-      } else {
-        const scanResult = scanComponents(document.getText(), document.fileName);
-        if (scanResult.targetComponent) {
-          const allComponentNames = scanResult.components.map((c) => c.name);
-          await this.renderTargetComponent(document, scanResult.targetComponent, false, allComponentNames);
-        }
-      }
+    // Trigger update on save via Vite Hot Code Replacement
+    if (activeEditor && activeEditor.document === document) {
+      await this.updatePreviewForEditor(activeEditor);
     }
   }
 
-  /**
-   * Resolves a source file path from various formats (Vite /@fs/, URL encodings, Windows drive
-   * prefixes, workspace-relative or current-file-relative paths) to an absolute path on disk.
-   */
-  public resolveSourcePath(rawFilePath: string): string | null {
-    if (!rawFilePath) return this.currentFilePath;
+  private resolveSourcePath(p: string): string | null {
+    if (!p) return null;
 
-    let p = rawFilePath.trim();
-    // Strip query string (?t=...) and hash (#...)
-    p = p.split('?')[0].split('#')[0];
-    try {
-      p = decodeURIComponent(p);
-    } catch {}
+    if (p.startsWith('/@fs/')) {
+      p = p.substring(5);
+    }
 
-    // Strip Vite prefixes: /@fs/, http://..., https://..., vscode-webview://...
-    p = p.replace(/^https?:\/\/[^/]+\/@fs\//i, '');
-    p = p.replace(/^\/@fs\//i, '');
-    p = p.replace(/^https?:\/\/[^/]+\//i, '');
-    p = p.replace(/^[a-z\-]+:\/\/[^/]+\//i, '');
+    if (p.startsWith('file:///')) {
+      p = vscode.Uri.parse(p).fsPath;
+    }
 
-    // Normalize slashes before Windows drive letter: /C:/ -> C:/ or ///C:/ -> C:/
-    p = p.replace(/^[/\\]+([a-zA-Z]:[/\\])/, '$1');
-    p = p.replace(/^([a-zA-Z]):/, (_, drive) => `${drive.toUpperCase()}:`);
+    p = p.replace(/\?.*$/, '');
 
-    // If it's a direct absolute or existing file that exists on disk
-    if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+    if (path.isAbsolute(p) && fs.existsSync(p) && fs.statSync(p).isFile()) {
       return path.resolve(p);
     }
 
-    // Try stripping leading slashes for relative resolution
     const cleanRel = p.replace(/^[/\\]+/, '');
 
-    // Check relative to currentFilePath directory if available
     if (this.currentFilePath) {
       const currentDir = path.dirname(this.currentFilePath);
       const relToCurrent = path.resolve(currentDir, cleanRel);
@@ -674,7 +496,6 @@ export class PreviewManager {
       }
     }
 
-    // Check relative to all workspace folders
     const workspaceFolders = vscode.workspace.workspaceFolders || [];
     for (const folder of workspaceFolders) {
       const folderPath = folder.uri.fsPath;
@@ -688,7 +509,6 @@ export class PreviewManager {
       }
     }
 
-    // Check if filename matches currentFilePath basename
     if (this.currentFilePath && path.basename(this.currentFilePath) === path.basename(p)) {
       return this.currentFilePath;
     }
@@ -697,50 +517,41 @@ export class PreviewManager {
   }
 
   /**
-   * Navigates to a specific file, line, and column in the active VS Code window,
-   * placing the cursor directly on the throwing function or component.
+   * Navigates to a specific file, line, and column in the active VS Code window.
    */
   public async navigateToSource(
     filePath: string,
-    line: number = 1,
-    column: number = 1,
+    line?: number,
+    column?: number,
     originalResolved?: boolean
   ): Promise<void> {
-    const now = Date.now();
-    const navKey = `${filePath}:${line}:${column}`;
-    if (navKey === this.lastNavigateTarget && now - this.lastNavigateTime < 300) {
-      return; // Deduplicate rapid simultaneous calls from postMessage + fetch
-    }
-    this.lastNavigateTime = now;
-    this.lastNavigateTarget = navKey;
-
     try {
-      let resolvedFile = filePath;
+      const now = Date.now();
+      const targetKey = `${filePath}:${line || 1}:${column || 1}`;
+      if (now - this.lastNavigateTime < 400 && this.lastNavigateTarget === targetKey) {
+        return;
+      }
+      this.lastNavigateTime = now;
+      this.lastNavigateTarget = targetKey;
+
       let targetLineNum = line;
       let targetColNum = column;
 
-      // If coordinates are transpiled (not yet marked originalResolved), map them to original source
-      if (!originalResolved && this.viteServer.isRunning()) {
-        const resolved = await this.viteServer.resolveOriginalPosition(filePath, line, column);
-        resolvedFile = resolved.filePath;
+      if (!originalResolved && line && line > 0 && this.viteServer.isRunning()) {
+        const resolved = await this.viteServer.resolveOriginalPosition(
+          filePath,
+          line,
+          column || 1
+        );
         targetLineNum = resolved.line;
         targetColNum = resolved.column;
-      }
-
-      let targetPath = this.resolveSourcePath(resolvedFile);
-
-      if (!targetPath) {
-        // Fallback: search workspace for matching filename
-        const cleanName = path.basename(resolvedFile.replace(/^[/\\]+/, '').split('?')[0].split('#')[0]);
-        if (cleanName) {
-          const found = await vscode.workspace.findFiles(`**/${cleanName}`, '**/node_modules/**', 1);
-          if (found.length > 0) {
-            targetPath = found[0].fsPath;
-          }
+        if (resolved.filePath) {
+          filePath = resolved.filePath;
         }
       }
 
-      // Ultimate fallback: open current component file
+      let targetPath = this.resolveSourcePath(filePath);
+
       if (!targetPath && this.currentFilePath && fs.existsSync(this.currentFilePath)) {
         targetPath = this.currentFilePath;
       }
@@ -759,8 +570,6 @@ export class PreviewManager {
       const pos = new vscode.Position(targetLine, targetCol);
       const selection = new vscode.Range(pos, pos);
 
-      // Determine the best view column:
-      // 1. If this document is already open in any visible text editor, reuse its column
       let targetColumn: vscode.ViewColumn = vscode.ViewColumn.One;
       const existingEditor = vscode.window.visibleTextEditors.find(
         (ed) => ed.document.uri.fsPath === doc.uri.fsPath
@@ -768,15 +577,9 @@ export class PreviewManager {
 
       if (existingEditor && existingEditor.viewColumn) {
         targetColumn = existingEditor.viewColumn;
-      } else if (this.panel && this.panel.viewColumn === vscode.ViewColumn.One) {
-        targetColumn = vscode.ViewColumn.Beside;
       } else {
         const activeCol = vscode.window.activeTextEditor?.viewColumn;
-        if (activeCol && activeCol !== this.panel?.viewColumn) {
-          targetColumn = activeCol;
-        } else {
-          targetColumn = vscode.ViewColumn.One;
-        }
+        targetColumn = activeCol || vscode.ViewColumn.One;
       }
 
       const editor = await vscode.window.showTextDocument(doc, {
@@ -790,42 +593,12 @@ export class PreviewManager {
       this.outputChannel.appendLine(`[Preview] Navigated to source at ${targetPath}:${targetLine + 1}:${targetCol + 1}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[Preview Error] Failed to navigate to source ${filePath}:${line} - ${msg}`);
-      vscode.window.showWarningMessage(`Could not open source file: ${filePath}`);
+      this.outputChannel.appendLine(`[Preview Error] Could not navigate to source ${filePath}: ${msg}`);
+      vscode.window.showWarningMessage(`Could not navigate to source file: ${filePath}`);
     } finally {
       setTimeout(() => {
         this.isNavigatingToSource = false;
       }, 500);
-    }
-  }
-
-  public isComponentLocked(filePath: string, compName: string): boolean {
-    return this.isLocked && this.lockedFilePath === filePath && this.lockedComponentName === compName;
-  }
-
-  public getActiveComponent(): { filePath: string; compName: string } | null {
-    if (this.currentFilePath && this.currentComponent) {
-      return { filePath: this.currentFilePath, compName: this.currentComponent.name };
-    }
-    return null;
-  }
-
-  public getEffectiveThemeKind(theme?: vscode.ColorTheme): 'dark' | 'light' {
-    const t = theme || vscode.window.activeColorTheme;
-    return t.kind === vscode.ColorThemeKind.Light || t.kind === vscode.ColorThemeKind.HighContrastLight
-      ? 'light'
-      : 'dark';
-  }
-
-  private handleColorThemeChange(theme: vscode.ColorTheme) {
-    const themeKind = this.getEffectiveThemeKind(theme);
-    if (this.panel) {
-      this.panel.webview.postMessage({
-        type: 'SYNC_THEME',
-        payload: {
-          themeKind,
-        },
-      });
     }
   }
 
@@ -860,6 +633,18 @@ export class PreviewManager {
     this.diagnosticCollection.set(targetUri, [diag]);
   }
 
+  public async switchComponent(componentName: string): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document.fileName === this.currentFilePath) {
+      const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
+      const target = scanResult.components.find((c) => c.name === componentName);
+      if (target) {
+        const allComponentNames = scanResult.components.map((c) => c.name);
+        await this.renderTargetComponent(editor.document, target, allComponentNames);
+      }
+    }
+  }
+
   public async showComponent(documentUri?: vscode.Uri, componentName?: string, line?: number): Promise<void> {
     let editor: vscode.TextEditor | undefined;
     if (documentUri) {
@@ -885,11 +670,11 @@ export class PreviewManager {
       const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
       const target = scanResult.components.find((c) => c.name === componentName);
       if (target) {
-        if (!this.panel) {
+        if (!this.isPreviewActive) {
           await this.showPreview(editor);
         }
         const allComponentNames = scanResult.components.map((c) => c.name);
-        await this.renderTargetComponent(editor.document, target, false, allComponentNames);
+        await this.renderTargetComponent(editor.document, target, allComponentNames);
         return;
       }
     }
@@ -899,25 +684,27 @@ export class PreviewManager {
 
   public resolveDebugBrowserType(overridePref?: string): DebugBrowserType {
     const config = vscode.workspace.getConfiguration('componentPreview');
-    const pref = overridePref || config.get<string>('debugBrowser', 'auto');
+    const pref = overridePref || config.get<string>('debugBrowser', 'integrated');
     return resolveDebugBrowserType(pref);
   }
 
   public async openWebviewDeveloperTools(): Promise<void> {
-    if (!this.panel) {
-      const activeEditor = vscode.window.activeTextEditor;
-      await this.showPreview(activeEditor);
-    } else {
-      this.panel.reveal(this.panel.viewColumn, false);
+    if (!isIntegratedBrowserSupported()) {
+      showUnsupportedVersionToast();
+      return;
     }
 
     try {
-      this.outputChannel.appendLine('[Preview] Opening Webview Developer Tools (internal, no external browser)...');
-      await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.outputChannel.appendLine(`[Preview Error] Could not open Webview Developer Tools: ${msg}`);
-      vscode.window.showWarningMessage('Could not open Webview Developer Tools.');
+      this.outputChannel.appendLine('[Preview] Opening Browser Developer Tools...');
+      await vscode.commands.executeCommand('workbench.action.browser.toggleDevTools');
+    } catch {
+      try {
+        await vscode.commands.executeCommand('workbench.action.webview.openDeveloperTools');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.outputChannel.appendLine(`[Preview Error] Could not open Developer Tools: ${msg}`);
+        vscode.window.showWarningMessage('Could not open Developer Tools.');
+      }
     }
   }
 
@@ -926,6 +713,11 @@ export class PreviewManager {
     componentName?: string,
     browserTypeOverride?: DebugBrowserType
   ): Promise<boolean> {
+    if (!isIntegratedBrowserSupported()) {
+      showUnsupportedVersionToast();
+      return false;
+    }
+
     if (!this.viteServer.isRunning()) {
       const port = await this.startServer();
       if (!port) return false;
@@ -958,7 +750,7 @@ export class PreviewManager {
       browserType: primaryBrowser,
     });
 
-    this.outputChannel.appendLine(`[Debug] Launching debugging session for <${compName} /> with ${primaryBrowser}...`);
+    this.outputChannel.appendLine(`[Debug] Launching Integrated Browser debugging session for <${compName} /> with ${primaryBrowser}...`);
     this.outputChannel.appendLine(`[Debug] URL: ${previewUrl}`);
     this.outputChannel.appendLine(`[Debug] webRoot: ${webRoot}`);
 
@@ -976,12 +768,13 @@ export class PreviewManager {
       }
 
       if (started) {
+        this.isPreviewActive = true;
         this.outputChannel.appendLine(`[Debug] Successfully started debugging <${compName} />.`);
         vscode.window.showInformationMessage(`Debugging <${compName} /> started. Set breakpoints in your component code.`);
       } else {
         this.outputChannel.appendLine(`[Debug] Debugger could not be started.`);
         vscode.window.showWarningMessage(
-          `Could not start browser debugger. You can inspect elements via "Component Preview: Open Webview Developer Tools".`
+          `Could not start integrated browser debugger. You can inspect elements via "Component Preview: Open Developer Tools".`
         );
       }
       return started;
@@ -997,6 +790,7 @@ export class PreviewManager {
         });
         const fallbackStarted = await vscode.debug.startDebugging(workspaceFolder, fallbackConfig);
         if (fallbackStarted) {
+          this.isPreviewActive = true;
           this.outputChannel.appendLine(`[Debug] Fallback launch with ${fallbackBrowser} succeeded.`);
           return true;
         }
@@ -1007,6 +801,11 @@ export class PreviewManager {
   }
 
   public async debugComponent(documentUri?: vscode.Uri, componentName?: string, line?: number): Promise<boolean> {
+    if (!isIntegratedBrowserSupported()) {
+      showUnsupportedVersionToast();
+      return false;
+    }
+
     let editor: vscode.TextEditor | undefined;
     if (documentUri) {
       const doc = await vscode.workspace.openTextDocument(documentUri);
@@ -1042,37 +841,22 @@ export class PreviewManager {
 
     if (target) {
       const allComponentNames = scanResult.components.map((c) => c.name);
-      await this.renderTargetComponent(editor.document, target, false, allComponentNames);
+      await this.renderTargetComponent(editor.document, target, allComponentNames);
     }
 
-    if (!this.panel) {
-      await this.showPreview(editor);
-    }
-
-    const config = vscode.workspace.getConfiguration('componentPreview');
-    const debugTarget = config.get<string>('debugTarget', 'devtools');
-    if (debugTarget === 'devtools') {
-      await this.openWebviewDeveloperTools();
-      return true;
-    } else if (debugTarget === 'integrated') {
-      return this.startDebugSession(editor.document, targetCompName, 'editor-browser');
-    }
-
+    this.isPreviewActive = true;
     return this.startDebugSession(editor.document, targetCompName);
   }
 
   public async debugPreview(editor?: vscode.TextEditor): Promise<boolean> {
+    if (!isIntegratedBrowserSupported()) {
+      showUnsupportedVersionToast();
+      return false;
+    }
+
     const targetEditor = editor || vscode.window.activeTextEditor;
     if (!targetEditor) {
       if (this.viteServer.isRunning() && this.currentComponent) {
-        const config = vscode.workspace.getConfiguration('componentPreview');
-        const debugTarget = config.get<string>('debugTarget', 'devtools');
-        if (debugTarget === 'devtools') {
-          await this.openWebviewDeveloperTools();
-          return true;
-        } else if (debugTarget === 'integrated') {
-          return this.startDebugSession(undefined, this.currentComponent.name, 'editor-browser');
-        }
         return this.startDebugSession(undefined, this.currentComponent.name);
       }
       vscode.window.showInformationMessage('Open a JSX or TSX file to debug components.');
@@ -1081,11 +865,22 @@ export class PreviewManager {
     return this.debugComponent(targetEditor.document.uri);
   }
 
+  public getEffectiveThemeKind(theme?: vscode.ColorTheme): 'dark' | 'light' {
+    const t = theme || vscode.window.activeColorTheme;
+    return t.kind === vscode.ColorThemeKind.Light || t.kind === vscode.ColorThemeKind.HighContrastLight
+      ? 'light'
+      : 'dark';
+  }
+
+  private handleColorThemeChange(theme: vscode.ColorTheme) {
+    const themeKind = this.getEffectiveThemeKind(theme);
+    this.viteServer.broadcastThemeChange(themeKind);
+  }
+
   public dispose() {
     this.diagnosticCollection.clear();
     this.diagnosticCollection.dispose();
     this.viteServer.stop();
-    this.panel?.dispose();
     this.statusBarItem.dispose();
     this.outputChannel.dispose();
     for (const d of this.disposables) {
