@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   ChevronUp,
   ChevronDown,
@@ -14,6 +14,8 @@ import {
   Check,
   Globe,
   ExternalLink,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { ActionLogItem } from './MockReduxProvider';
 import { navigateToSource } from './errorLocationParser';
@@ -51,11 +53,152 @@ const LogSourceBadge: React.FC<{
   }
 };
 
+const DEFAULT_PANEL_HEIGHT = 270;
+const MIN_PANEL_HEIGHT = 80;
+const STORAGE_KEY = 'component-preview-drawer-height';
+
 export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Resizable drawer height
+  const [height, setHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= MIN_PANEL_HEIGHT) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return DEFAULT_PANEL_HEIGHT;
+  });
+
+  const [isResizing, setIsResizing] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const preMaximizedHeightRef = useRef<number>(height);
+
+  const startYRef = useRef<number>(0);
+  const startHeightRef = useRef<number>(height);
+
+  // Save non-maximized height to localStorage
+  useEffect(() => {
+    if (!isMaximized && height >= MIN_PANEL_HEIGHT) {
+      try {
+        localStorage.setItem(STORAGE_KEY, String(height));
+      } catch {}
+    }
+  }, [height, isMaximized]);
+
+  // Adjust height on window resize to ensure drawer remains within viewport
+  useEffect(() => {
+    const handleWindowResize = () => {
+      const maxH = typeof window !== 'undefined' ? window.innerHeight - 45 : 700;
+      if (isMaximized) {
+        setHeight(Math.max(MIN_PANEL_HEIGHT, maxH));
+      } else {
+        setHeight((prev) => {
+          if (prev > maxH && maxH >= MIN_PANEL_HEIGHT) {
+            return maxH;
+          }
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, [isMaximized]);
+
+  // Handle pointer down on resizer top handle
+  const handleResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      setIsResizing(true);
+      setIsMaximized(false);
+
+      const startY = e.clientY;
+      startYRef.current = startY;
+      const initialHeight = isExpanded ? height : 34;
+      startHeightRef.current = initialHeight;
+
+      let hasMoved = false;
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        const deltaY = startYRef.current - moveEvent.clientY;
+        if (Math.abs(deltaY) > 3) {
+          hasMoved = true;
+        }
+
+        const maxH = typeof window !== 'undefined' ? window.innerHeight - 45 : 800;
+        const calculated = startHeightRef.current + deltaY;
+
+        if (!isExpanded && deltaY > 15) {
+          setIsExpanded(true);
+        }
+
+        const clamped = Math.max(MIN_PANEL_HEIGHT, Math.min(maxH, calculated));
+        setHeight(clamped);
+      };
+
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        setIsResizing(false);
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+
+        const deltaY = startYRef.current - upEvent.clientY;
+        // If dragged down towards the bottom past snap threshold, collapse
+        if (startHeightRef.current + deltaY < 60) {
+          setIsExpanded(false);
+          setHeight((prev) => Math.max(prev, DEFAULT_PANEL_HEIGHT));
+        } else if (hasMoved) {
+          const maxH = typeof window !== 'undefined' ? window.innerHeight - 45 : 800;
+          const clamped = Math.max(MIN_PANEL_HEIGHT, Math.min(maxH, startHeightRef.current + deltaY));
+          setHeight(clamped);
+        }
+      };
+
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+    },
+    [isExpanded, height]
+  );
+
+  const handleDoubleClickResizer = useCallback(() => {
+    if (!isExpanded) {
+      setIsExpanded(true);
+    } else {
+      setIsMaximized(false);
+      setHeight(DEFAULT_PANEL_HEIGHT);
+    }
+  }, [isExpanded]);
+
+  const handleToggleMaximize = useCallback(() => {
+    const maxH = typeof window !== 'undefined' ? window.innerHeight - 45 : 700;
+    if (!isExpanded) {
+      setIsExpanded(true);
+      setIsMaximized(true);
+      preMaximizedHeightRef.current = height;
+      setHeight(maxH);
+    } else if (!isMaximized) {
+      setIsMaximized(true);
+      preMaximizedHeightRef.current = height;
+      setHeight(maxH);
+    } else {
+      setIsMaximized(false);
+      setHeight(preMaximizedHeightRef.current || DEFAULT_PANEL_HEIGHT);
+    }
+  }, [isExpanded, isMaximized, height]);
 
   const filteredLogs = useMemo(() => {
     let result = logs;
@@ -114,8 +257,31 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
   const { consoleCount, reduxCount, callbackCount, networkCount, errorCount, warnCount } = counts;
 
   return (
-    <div className={`action-panel ${isExpanded ? 'expanded' : 'collapsed'}`}>
-      <div className="action-panel-header" onClick={() => setIsExpanded(!isExpanded)}>
+    <div
+      className={`action-panel ${isExpanded ? 'expanded' : 'collapsed'} ${isResizing ? 'is-resizing' : ''}`}
+      style={{ height: isExpanded ? `${height}px` : undefined }}
+    >
+      {/* Resizer Handle */}
+      <div
+        className={`action-panel-resizer ${isResizing ? 'active' : ''}`}
+        onPointerDown={handleResizeStart}
+        onDoubleClick={handleDoubleClickResizer}
+        title="Drag to resize drawer (double-click to reset)"
+      >
+        <div className="resizer-handle-line" />
+      </div>
+
+      <div
+        className="action-panel-header"
+        onClick={() => {
+          if (isExpanded) {
+            setIsExpanded(false);
+            setIsMaximized(false);
+          } else {
+            setIsExpanded(true);
+          }
+        }}
+      >
         <div className="action-panel-title">
           <Terminal size={14} className="title-icon" />
           <span>Console &amp; Actions</span>
@@ -142,7 +308,27 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
               <Trash2 size={13} />
             </button>
           )}
-          <button className="toggle-btn" onClick={() => setIsExpanded(!isExpanded)}>
+          {isExpanded && (
+            <button
+              className="maximize-btn"
+              onClick={handleToggleMaximize}
+              title={isMaximized ? 'Restore drawer height' : 'Maximize drawer'}
+            >
+              {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+          )}
+          <button
+            className="toggle-btn"
+            onClick={() => {
+              if (isExpanded) {
+                setIsExpanded(false);
+                setIsMaximized(false);
+              } else {
+                setIsExpanded(true);
+              }
+            }}
+            title={isExpanded ? 'Collapse drawer' : 'Expand drawer'}
+          >
             {isExpanded ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
           </button>
         </div>
