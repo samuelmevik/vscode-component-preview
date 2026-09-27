@@ -90,6 +90,32 @@ export function buildComponentDebugConfig(
 ): vscode.DebugConfiguration {
   const browserType = options.browserType || 'editor-browser';
   const cleanWebRoot = options.webRoot.replace(/\\/g, '/');
+  const isWindows = process.platform === 'win32' || /^[a-zA-Z]:/.test(cleanWebRoot);
+
+  const pathMapping: Record<string, string> = {
+    '/': cleanWebRoot,
+  };
+
+  const sourceMapPathOverrides: Record<string, string> = {
+    'file:///*': '/*',
+    '/*': '${webRoot}/*',
+  };
+
+  if (isWindows) {
+    const drives = ['c', 'C', 'd', 'D', 'e', 'E', 'f', 'F', 'g', 'G', 'h', 'H', 'x', 'X', 'y', 'Y', 'z', 'Z'];
+    for (const d of drives) {
+      pathMapping[`/@fs/${d}:`] = `${d}:`;
+      pathMapping[`/@fs/${d}:/`] = `${d}:/`;
+      sourceMapPathOverrides[`/@fs/${d}:/*`] = `${d}:/*`;
+    }
+    pathMapping['/@fs/'] = '';
+    pathMapping['/@fs'] = '';
+    sourceMapPathOverrides['/@fs/*'] = '*';
+  } else {
+    pathMapping['/@fs/'] = '/';
+    pathMapping['/@fs'] = '/';
+    sourceMapPathOverrides['/@fs/*'] = '/*';
+  }
 
   return {
     type: browserType,
@@ -97,6 +123,7 @@ export function buildComponentDebugConfig(
     request: 'launch',
     url: options.previewUrl,
     webRoot: cleanWebRoot,
+    pathMapping,
     sourceMaps: true,
     smartStep: true,
     skipFiles: [
@@ -106,11 +133,7 @@ export function buildComponentDebugConfig(
       '**/@react-refresh',
       '**/preview-app/**',
     ],
-    sourceMapPathOverrides: {
-      '/@fs/*': '/*',
-      'file:///*': '/*',
-      '/*': '${webRoot}/*',
-    },
+    sourceMapPathOverrides,
   };
 }
 

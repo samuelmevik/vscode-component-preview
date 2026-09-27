@@ -51,6 +51,7 @@ import {
 interface ActionPanelProps {
   logs: ActionLogItem[];
   onClear: () => void;
+  componentName?: string;
 }
 
 type FilterType = 'all' | 'errors' | 'network' | 'redux' | 'console' | 'callback';
@@ -1041,7 +1042,7 @@ const StandardLogItemRow: React.FC<{
   );
 };
 
-export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
+export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear, componentName }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [filter, setFilter] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1627,8 +1628,12 @@ export const ActionPanel: React.FC<ActionPanelProps> = ({ logs, onClear }) => {
           <button
             className="debug-panel-btn"
             onClick={() => {
-              window.parent.postMessage({ type: 'START_DEBUG' }, '*');
-              fetch('/__preview_api/start_debug', { method: 'POST' }).catch(() => {});
+              window.parent.postMessage({ type: 'START_DEBUG', payload: { componentName } }, '*');
+              fetch('/__preview_api/start_debug', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ componentName }),
+              }).catch(() => {});
             }}
             title="Debug Component in VS Code (Ctrl+Alt+D)"
           >

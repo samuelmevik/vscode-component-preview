@@ -30,6 +30,7 @@ export class PreviewManager {
   private lastNavigateTarget: string = '';
   public codeLensProvider: PreviewCodeLensProvider;
   private diagnosticCollection: vscode.DiagnosticCollection;
+  private currentDebugSession: vscode.DebugSession | null = null;
 
   constructor(context: vscode.ExtensionContext) {
     this.extensionContext = context;
@@ -50,6 +51,15 @@ export class PreviewManager {
     this.statusBarItem.command = 'componentPreview.stopServer';
     this.disposables.push(this.statusBarItem);
     this.updateServerRunningContext(false);
+
+    this.disposables.push(
+      vscode.debug.onDidTerminateDebugSession((session) => {
+        if (this.currentDebugSession && this.currentDebugSession.id === session.id) {
+          this.outputChannel.appendLine(`[Debug] Debug session terminated: ${session.name}`);
+          this.currentDebugSession = null;
+        }
+      })
+    );
 
     vscode.window.onDidChangeActiveColorTheme(
       (theme) => this.handleColorThemeChange(theme),
@@ -73,8 +83,8 @@ export class PreviewManager {
       await this.openWebviewDeveloperTools();
     };
 
-    this.viteServer.onSwitchComponentRequested = (compName) => {
-      this.switchComponent(compName);
+    this.viteServer.onSwitchComponentRequested = async (compName) => {
+      await this.switchComponent(compName);
     };
 
     this.viteServer.onNavigateRequested = (filePath, line, column) => {
@@ -634,13 +644,35 @@ export class PreviewManager {
   }
 
   public async switchComponent(componentName: string): Promise<void> {
+    const filePath = this.currentFilePath || this.viteServer.getState()?.currentFile;
+    if (!filePath) return;
+
+    let document: vscode.TextDocument | undefined;
     const editor = vscode.window.activeTextEditor;
-    if (editor && editor.document.fileName === this.currentFilePath) {
-      const scanResult = scanComponents(editor.document.getText(), editor.document.fileName);
+    if (editor && editor.document.fileName === filePath) {
+      document = editor.document;
+    } else {
+      document = vscode.workspace.textDocuments.find((d) => d.fileName === filePath);
+      if (!document) {
+        try {
+          document = await vscode.workspace.openTextDocument(filePath);
+        } catch {}
+      }
+    }
+
+    if (document) {
+      const scanResult = scanComponents(document.getText(), document.fileName);
       const target = scanResult.components.find((c) => c.name === componentName);
       if (target) {
         const allComponentNames = scanResult.components.map((c) => c.name);
-        await this.renderTargetComponent(editor.document, target, allComponentNames);
+        await this.renderTargetComponent(document, target, allComponentNames);
+
+        if (editor && editor.document.fileName === filePath) {
+          const line = Math.max((target.nameLine || target.startLine || 1) - 1, 0);
+          const pos = new vscode.Position(line, 0);
+          editor.selection = new vscode.Selection(pos, pos);
+          editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        }
       }
     }
   }
@@ -743,6 +775,30 @@ export class PreviewManager {
       ? detectInstalledBrowser()
       : primaryBrowser === 'pwa-chrome' ? 'pwa-msedge' : 'pwa-chrome';
 
+    const activeSession = this.currentDebugSession || (
+      vscode.debug.activeDebugSession &&
+      (vscode.debug.activeDebugSession.name.includes('(Component Preview)') ||
+       vscode.debug.activeDebugSession.configuration?.url?.includes('/__preview__'))
+        ? vscode.debug.activeDebugSession
+        : null
+    );
+
+    if (activeSession) {
+      if (browserTypeOverride && activeSession.configuration?.type !== browserTypeOverride) {
+        this.outputChannel.appendLine(`[Debug] Switching browser from ${activeSession.configuration?.type} to ${browserTypeOverride}. Stopping existing session...`);
+        try {
+          await vscode.debug.stopDebugging(activeSession);
+          await new Promise((r) => setTimeout(r, 600));
+        } catch {}
+      } else {
+        this.outputChannel.appendLine(`[Debug] Reusing active debug session (${activeSession.name}) for <${compName} />.`);
+        this.currentDebugSession = activeSession;
+        this.isPreviewActive = true;
+        vscode.window.showInformationMessage(`Debugger already active. Now debugging <${compName} />.`);
+        return true;
+      }
+    }
+
     const debugConfig = buildComponentDebugConfig({
       compName,
       previewUrl,
@@ -768,6 +824,7 @@ export class PreviewManager {
       }
 
       if (started) {
+        this.currentDebugSession = vscode.debug.activeDebugSession || null;
         this.isPreviewActive = true;
         this.outputChannel.appendLine(`[Debug] Successfully started debugging <${compName} />.`);
         vscode.window.showInformationMessage(`Debugging <${compName} /> started. Set breakpoints in your component code.`);
@@ -790,6 +847,7 @@ export class PreviewManager {
         });
         const fallbackStarted = await vscode.debug.startDebugging(workspaceFolder, fallbackConfig);
         if (fallbackStarted) {
+          this.currentDebugSession = vscode.debug.activeDebugSession || null;
           this.isPreviewActive = true;
           this.outputChannel.appendLine(`[Debug] Fallback launch with ${fallbackBrowser} succeeded.`);
           return true;

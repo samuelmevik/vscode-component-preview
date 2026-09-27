@@ -86,13 +86,23 @@ function instantiateStore(storeOrFactory: any, initialState: Record<string, any>
 }
 
 function createFallbackStore(initialState: Record<string, any>, onActionDispatched: (item: ActionLogItem) => void) {
-  const reducer = (state = initialState, _action: any) => {
-    return state;
+  const handler: ProxyHandler<Record<string, any>> = {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string' && !(prop in target) && prop !== 'then' && prop !== 'toJSON' && prop !== 'constructor' && prop !== '$$typeof') {
+        return new Proxy({ queries: {}, mutations: {}, provided: {}, subscriptions: {}, config: {} }, handler);
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  };
+  const safeInitialState = new Proxy({ ...initialState }, handler);
+
+  const reducer = (state = safeInitialState, _action: any) => {
+    return state || safeInitialState;
   };
 
   const store = configureStore({
     reducer,
-    preloadedState: initialState,
+    preloadedState: safeInitialState,
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({
         serializableCheck: false,

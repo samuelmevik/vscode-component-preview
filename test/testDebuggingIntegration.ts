@@ -66,9 +66,12 @@ function testDebugConfigBuilder() {
   assert.ok(config.skipFiles.includes('**/@react-refresh'), 'skipFiles must include @react-refresh');
   assert.ok(config.skipFiles.includes('**/preview-app/**'), 'skipFiles must include preview-app harness');
 
-  // Verify sourceMapPathOverrides
+  // Verify sourceMapPathOverrides & pathMapping
   assert.ok(config.sourceMapPathOverrides['/@fs/*'], 'sourceMapPathOverrides must handle Vite /@fs/*');
   assert.ok(config.sourceMapPathOverrides['/*'], 'sourceMapPathOverrides must handle /* mapping to ${webRoot}/*');
+  assert.ok(config.pathMapping, 'pathMapping must be configured for Vite paths');
+  assert.ok(config.pathMapping['/@fs/C:'], 'pathMapping must map Windows drive C:');
+  assert.ok(config.sourceMapPathOverrides['/@fs/C:/*'], 'sourceMapPathOverrides must map Windows drive C:/*');
 
   // Verify editor-browser configuration
   const integratedConfig = buildComponentDebugConfig({

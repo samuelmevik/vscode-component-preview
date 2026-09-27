@@ -259,6 +259,7 @@ function generateVirtualEntry(
       } else {
         previewRoot.render(
           React.createElement(Harness, {
+            key: '${normalizedFilePath}:${compName}',
             ComponentToRender: SelectedComponent,
             userModule: UserModule,
             storeModules: storeModules,
@@ -296,7 +297,7 @@ export class PreviewViteServer {
   public onCopyToClipboard?: (text: string) => Promise<void> | void;
   public onStartDebugRequested?: (componentName?: string, target?: 'devtools' | 'integrated' | 'browser') => void;
   public onOpenDevToolsRequested?: () => void;
-  public onSwitchComponentRequested?: (componentName: string) => void;
+  public onSwitchComponentRequested?: (componentName: string) => Promise<void> | void;
 
   constructor(extensionPath: string, port = 4545) {
     this.extensionPath = extensionPath;
@@ -329,12 +330,24 @@ export class PreviewViteServer {
     // For edits within the same component, Vite's React Fast Refresh automatically hot-swaps
     // the component in-place, preserving React state (inputs, useState, etc.).
     if (this.server && (fileChanged || compChanged)) {
-      const mods = Array.from(this.server.moduleGraph.idToModuleMap.values()).filter(
-        (m) => m.id && m.id.includes('preview_entry.tsx')
-      );
-      for (const mod of mods) {
-        this.server.moduleGraph.invalidateModule(mod);
-      }
+      try {
+        const modById = this.server.moduleGraph.getModuleById('\0preview_entry.tsx');
+        if (modById) {
+          this.server.moduleGraph.invalidateModule(modById);
+        }
+      } catch {}
+      try {
+        for (const mod of this.server.moduleGraph.idToModuleMap.values()) {
+          if (mod.id && mod.id.includes('preview_entry.tsx')) {
+            this.server.moduleGraph.invalidateModule(mod);
+          }
+        }
+        for (const mod of this.server.moduleGraph.urlToModuleMap.values()) {
+          if (mod.url && mod.url.includes('preview_entry')) {
+            this.server.moduleGraph.invalidateModule(mod);
+          }
+        }
+      } catch {}
       const hot = (this.server as any).hot || (this.server as any).ws;
       if (hot && typeof hot.send === 'function') {
         hot.send({
@@ -434,11 +447,11 @@ export class PreviewViteServer {
           if (url.startsWith('/__preview_api/switch_component') && req.method === 'POST') {
             let body = '';
             req.on('data', (chunk) => { body += chunk; });
-            req.on('end', () => {
+            req.on('end', async () => {
               try {
                 const data = body ? JSON.parse(body) : {};
                 if (data.componentName) {
-                  this.onSwitchComponentRequested?.(data.componentName);
+                  await this.onSwitchComponentRequested?.(data.componentName);
                 }
               } catch {}
               res.setHeader('Content-Type', 'application/json');

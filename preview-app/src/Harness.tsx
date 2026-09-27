@@ -129,6 +129,40 @@ export const Harness: React.FC<HarnessProps> = ({
     } catch {}
   }, [canvasTheme]);
 
+  const isFirstMountRef = useRef(true);
+
+  // Keep internal state in sync with props passed from Vite virtual entry
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    setVariants(initialVariants);
+    setActiveVariantIndex((prev) => (prev < initialVariants.length ? prev : 0));
+    setRemountCount((prev) => prev + 1);
+    setRuntimeErrors([]);
+  }, [initialVariants]);
+
+  useEffect(() => {
+    setComponentName(initialComponentName);
+  }, [initialComponentName]);
+
+  useEffect(() => {
+    setCurrentFilePath(initialFilePath);
+  }, [initialFilePath]);
+
+  useEffect(() => {
+    setComponentStartLine(initialComponentStartLine);
+  }, [initialComponentStartLine]);
+
+  useEffect(() => {
+    setCommentStartLine(initialCommentStartLine);
+  }, [initialCommentStartLine]);
+
+  useEffect(() => {
+    setAllComponents(initialAllComponents);
+  }, [initialAllComponents]);
+
   const effectiveTheme = useMemo(() => {
     if (canvasTheme === 'auto') {
       return vscodeTheme;
@@ -353,8 +387,10 @@ export const Harness: React.FC<HarnessProps> = ({
     }
   }, [componentName, isLocked]);
 
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+
   const handleSwitchComponent = useCallback((newCompName: string) => {
-    setComponentName(newCompName);
+    setSwitchingTo(newCompName);
     window.parent.postMessage(
       { type: 'SWITCH_COMPONENT', payload: { componentName: newCompName } },
       '*'
@@ -363,7 +399,11 @@ export const Harness: React.FC<HarnessProps> = ({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ componentName: newCompName }),
-    }).catch(() => {});
+    })
+      .catch(() => {})
+      .finally(() => {
+        setSwitchingTo(null);
+      });
   }, []);
 
   const addActionLog = useCallback((item: ActionLogItem) => {
@@ -845,8 +885,9 @@ export const Harness: React.FC<HarnessProps> = ({
               <div className="comp-dropdown-wrapper">
                 <select
                   className="comp-select"
-                  value={componentName}
+                  value={switchingTo || componentName}
                   onChange={(e) => handleSwitchComponent(e.target.value)}
+                  disabled={Boolean(switchingTo)}
                   title="Switch between exported components in this file"
                 >
                   {allComponents.map((name) => (
@@ -1112,9 +1153,13 @@ export const Harness: React.FC<HarnessProps> = ({
               )}
             </div>
           ) : (() => {
-            const activeStorePath = activeVariant.storePath;
+            const activeStorePath = activeVariant.storePath || variants.find((v) => v.storePath)?.storePath;
             const cleanStorePath = activeStorePath ? activeStorePath.split('#')[0].trim() : undefined;
-            const activeStoreModule = cleanStorePath && storeModules ? storeModules[cleanStorePath] : undefined;
+            const activeStoreModule = cleanStorePath && storeModules
+              ? storeModules[cleanStorePath]
+              : (storeModules && Object.keys(storeModules).length === 1
+                  ? Object.values(storeModules)[0]
+                  : undefined);
             const activeStoreError = activeStoreModule?.__error__;
             const storeExportName = activeStorePath && activeStorePath.includes('#')
               ? activeStorePath.split('#')[1]?.trim()
@@ -1149,9 +1194,13 @@ export const Harness: React.FC<HarnessProps> = ({
             }
 
             // Resolve optional wrapper component from wrapperPath
-            const activeWrapperPath = activeVariant.wrapperPath;
+            const activeWrapperPath = activeVariant.wrapperPath || variants.find((v) => v.wrapperPath)?.wrapperPath;
             const cleanWrapperPath = activeWrapperPath ? activeWrapperPath.split('#')[0].trim() : undefined;
-            const activeWrapperModule = cleanWrapperPath && wrapperModules ? wrapperModules[cleanWrapperPath] : undefined;
+            const activeWrapperModule = cleanWrapperPath && wrapperModules
+              ? wrapperModules[cleanWrapperPath]
+              : (wrapperModules && Object.keys(wrapperModules).length === 1
+                  ? Object.values(wrapperModules)[0]
+                  : undefined);
             const WrapperComponent =
               activeWrapperModule?.default ||
               activeWrapperModule?.Wrapper ||
@@ -1264,7 +1313,7 @@ export const Harness: React.FC<HarnessProps> = ({
       )}
 
       {/* Action / Event Inspector Drawer */}
-      <ActionPanel logs={actionLogs} onClear={clearActionLogs} />
+      <ActionPanel logs={actionLogs} onClear={clearActionLogs} componentName={componentName} />
     </div>
   );
 };
